@@ -360,8 +360,7 @@ def response_translator(state: State) -> dict:
     translated = llm.invoke(messages)
 
     return {
-        "native_response": translated.content,
-        "final_response": translated.content
+        "native_response": translated.content
     }
 def caching_agent (state:State) -> dict[str,any]:
     caching_stat = state.get('cached')
