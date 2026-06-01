@@ -3,33 +3,44 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import os
+import streamlit as st
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-import os
-import streamlit as st
 
-for key in [
-    "OPENAI_API_KEY",
-    "PINECONE_API_KEY",
-    "TAVILY_API_KEY",
-    "LANGCHAIN_API_KEY",
-    "LANGCHAIN_TRACING_V2",
-    "LANGCHAIN_PROJECT",
-]:
-    if key in st.secrets:
-        os.environ[key] = str(st.secrets[key])
+def load_streamlit_secrets():
+    secret_keys = [
+        "OPENAI_API_KEY",
+        "PINECONE_API_KEY",
+        "TAVILY_API_KEY",
+        "LANGSMITH_API_KEY",
+        "LANGCHAIN_API_KEY",
+        "LANGSMITH_TRACING",
+        "LANGCHAIN_TRACING_V2",
+        "LANGSMITH_PROJECT",
+        "LANGCHAIN_PROJECT",
+    ]
 
-# Your latest project defines the class as `workflow`.
-# This fallback also supports older versions where the class may be named `WorkFlow`.
-try:
-    from workflow import workflow as WorkflowClass
-except ImportError:
-    from workflow import WorkFlow as WorkflowClass
+    try:
+        secrets = st.secrets
+        for key in secret_keys:
+            try:
+                if key in secrets:
+                    os.environ[key] = str(secrets[key])
+            except Exception:
+                continue
+    except Exception:
+        # No Streamlit secrets configured.
+        # Local .env or system environment variables will be used instead.
+        pass
 
+
+load_streamlit_secrets()
 
 # -----------------------------
 # Page Configuration
