@@ -93,7 +93,7 @@ def image_exp_agent (state:State) -> str :
 
     # Standard LangChain multimodal structure payload
     messages = [
-        SystemMessage(content='image_system_prompt'),
+        SystemMessage(content=image_system_prompt),
         HumanMessage(content=[
             {"type": "text", "text": "Analyze this asset for compliance evaluation."},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
@@ -128,7 +128,7 @@ def k_getter_use_web(state:State) -> str:
         HumanMessage(content=k_web_humman(query))
     ]
 
-    results : descion = llm_cons(messages)
+    results : descion = llm_cons.invoke(messages)
     return {
         'k' : results.k ,
         'is_web' : results.is_web
@@ -145,10 +145,11 @@ def web_scrapper_agent (state:State) -> str :
 
 def responser_agent (state:State) -> str:
     query = state.get('merged')
+    context = state.get('context', [])
     
     messages = [
         SystemMessage(content=responser_system_prompt),
-        HumanMessage(content=responser_humman_prompt(query))
+        HumanMessage(content=responser_humman_prompt(query, context))
     ]
 
     response = llm.invoke(messages)
@@ -175,5 +176,5 @@ def ranker_agent(state:State) -> str :
         HumanMessage(content=ranker_humman_prompt(query,image,response))
     ]
 
-    result : rank = llm_cons_rank(messages)
+    result : rank = llm_cons_rank.invoke(messages)
     return {'rank': result.k}

@@ -93,10 +93,16 @@ responser_system_prompt = (
     "- Maintain a neutral, professional, legalistic yet practical engineering tone."
 )
 
-def responser_humman_prompt(query: str) -> str:
-    return f"Based on the verified 1926 regulations context, formulate the authoritative response for this construction site safety evaluation:\n\n{query}"
+def responser_humman_prompt(query: str, context: list) -> str:
+    return f"""
+Retrieved OSHA Context:
+{context}
 
+User Query:
+{query}
 
+Based strictly on the retrieved context, generate the compliance answer.
+"""
 # ==========================================
 # 6. RANKER AGENT PROMPTS
 # ==========================================
@@ -108,9 +114,10 @@ ranker_system_prompt = (
 )
 
 def ranker_humman_prompt(query: str, image_bytes_cleaned: str, response: str) -> str:
+    image = image_bytes_cleaned[:100] if image_bytes_cleaned else "No image provided"
     return (
         f"Original Clean Query:\n{query}\n\n"
-        f"Cleaned Image Data Snippet:\n{image_bytes_cleaned[:100]}...[truncated]\n\n"
+        f"Cleaned Image Data Snippet:\n{image}\n\n"
         f"Generated Compliance Response:\n{response}\n\n"
         f"Evaluate the alignment and output your structured ranking metadata parameters:"
     )

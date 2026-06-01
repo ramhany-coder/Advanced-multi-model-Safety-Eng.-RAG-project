@@ -1,4 +1,6 @@
 from langgraph.graph import START , END , StateGraph
+from asyncio import graph
+from asyncio import graph
 from models import *
 from agents import *
 from langsmith import traceable
@@ -46,6 +48,8 @@ class workflow():
     def compile (self):
         graph = StateGraph(State)
 
+        graph.add_node('entry_state',self.entry)
+        graph.add_node("cache_check", self.is_cache)
         graph.add_node('responser',self.responser)
         graph.add_node('query_filter',self.query_filter)
         graph.add_node('image_filter',self.image_filter)
@@ -58,7 +62,7 @@ class workflow():
         graph.add_node('ranker',self.ranker)
         graph.add_node('caching',self.caching_agent)
 
-        graph.add_conditional_edges(START,entry_router,{
+        graph.add_conditional_edges(START,'entry_state',{
             'query_rewritter':'query_filter',
             'image': 'image_filter'
         })
@@ -69,9 +73,11 @@ class workflow():
         graph.add_edge('query_rewritter','merger')
         graph.add_edge('image','merger')
 
-        graph.add_conditional_edges("merger",is_cached,{
-            'jump':END,
-            'continue' : 'k_web_getter'
+        graph.add_edge("merger", "cache_check")
+
+        graph.add_conditional_edges("cache_check", is_cached, {
+            "jump": END,
+            "continue": "k_web_getter"
         })
 
 
@@ -87,7 +93,7 @@ class workflow():
 
         graph.add_conditional_edges('ranker',ranker,{
             'accepted': 'caching' ,
-            'rejected': self.entry
+            'rejected': END
         })
 
         graph.add_edge('caching',END)

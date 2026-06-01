@@ -7,7 +7,7 @@
 
 An enterprise-grade, highly robust, and safety-critical Multimodal Retrieval-Augmented Generation (RAG) pipeline designed to automate construction site hazard assessments and verify compliance with **OSHA 29 CFR Part 1926** standards.
 
-This repository demonstrates production-ready AI engineering practices, focusing on **stateful multi-agent orchestration, hybrid semantic/lexical retrieval pipelines, strict PII data guardrails, and deterministic caching** for cost and latency optimization.
+This repository demonstrates production-ready AI engineering practices, focusing on **stateful multi-agent orchestration, hybrid semantic/lexical retrieval pipelines, strict PII data guardrails, and determinisgiREADME.metic caching** for cost and latency optimization.
 
 ---
 
