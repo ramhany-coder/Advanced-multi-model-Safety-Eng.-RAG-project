@@ -42,7 +42,23 @@ image_pii = ImageRedactorEngine()
 def hyb_retriver_agent (state:State) -> str :
     query = state.get('merged')
     k = state.get('k',5)
+    if PersistentBM25Retriever is None:
+        dense_docs = dense_ret.invoke(query)
 
+        reranker = PineconeRerank(
+            model="bge-reranker-v2-m3",
+            top_n=k
+        )
+
+        reranked_response = reranker.compress_documents(
+            documents=dense_docs,
+            query=query
+        )
+
+        return {
+            "context": reranked_response,
+            "retrieval_mode": "dense_only_fallback"
+        }
     dense_ret = vbd_ret.as_retriever(kwargs=10)
     sparse_ret  = PersistentBM25Retriever().from_persist_dir(save_dir='osha_sparse',k=5)
 
