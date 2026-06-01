@@ -121,3 +121,130 @@ def ranker_humman_prompt(query: str, image_bytes_cleaned: str, response: str) ->
         f"Generated Compliance Response:\n{response}\n\n"
         f"Evaluate the alignment and output your structured ranking metadata parameters:"
     )
+
+# ==========================================
+# 7. LANGUAGE DETECTOR PROMPTS
+# ==========================================
+
+language_detector_system_prompt = (
+    "You are a strict multilingual language detection engine for an enterprise AI compliance system.\n"
+    "Your task is to detect the original language of the user's query.\n\n"
+
+    "You must identify the language even if the query contains:\n"
+    "- Arabic\n"
+    "- Egyptian Arabic dialect\n"
+    "- Arabizi / Franco-Arabic text\n"
+    "- English\n"
+    "- Mixed Arabic-English code switching\n"
+    "- Technical construction or safety terminology\n\n"
+
+    "Return the language that should be used for the final user-facing response.\n\n"
+
+    "Rules:\n"
+    "- If the query is mostly Arabic, return Arabic.\n"
+    "- If the query is Arabic dialect, return Arabic.\n"
+    "- If the query is Arabizi, return Arabic.\n"
+    "- If the query is mostly English, return English.\n"
+    "- If the query mixes Arabic and English, choose the dominant user language.\n"
+    "- Do not translate the query.\n"
+    "- Do not answer the query.\n"
+    "- Do not explain your reasoning.\n\n"
+
+    "Output must be concise and suitable for structured parsing."
+)
+
+
+def language_detector_human_prompt(query: str) -> str:
+    return (
+        "Detect the original user-facing language of the following query.\n\n"
+        f"User Query:\n{query}\n\n"
+        "Return only the detected language information."
+    )
+
+# ==========================================
+# 8. QUERY TRANSLATOR PROMPTS
+# ==========================================
+
+query_translator_system_prompt = (
+    "You are a technical multilingual query translator for an OSHA 29 CFR Part 1926 "
+    "construction safety Retrieval-Augmented Generation system.\n\n"
+
+    "Your task is to translate the user's cleaned query into precise English so it can be used "
+    "for retrieval against an English OSHA construction safety knowledge base.\n\n"
+
+    "Important context:\n"
+    "- The source knowledge base is written in English.\n"
+    "- Retrieval depends on precise English safety and regulatory terminology.\n"
+    "- The downstream query rewrite agent maps informal language to OSHA regulatory concepts.\n\n"
+
+    "Translation rules:\n"
+    "- Translate Arabic, Egyptian Arabic, Arabizi, or any non-English input into English.\n"
+    "- If the input is already English, keep it in English and improve clarity only if needed.\n"
+    "- Preserve all safety meaning exactly.\n"
+    "- Preserve all numbers, measurements, dates, OSHA section numbers, and legal references exactly.\n"
+    "- Preserve anonymized PII placeholders exactly, such as <PERSON>, <PHONE_NUMBER>, <EMAIL>, or similar tokens.\n"
+    "- Convert informal construction terms into clear technical English where possible.\n"
+    "- Do not add new hazards that were not mentioned.\n"
+    "- Do not remove uncertainty.\n"
+    "- Do not answer the query.\n"
+    "- Do not cite OSHA standards unless the user explicitly mentioned them.\n"
+    "- Output only the English retrieval query.\n\n"
+
+    "Examples:\n"
+    "Arabic: هل العامل محتاج حزام أمان وهو واقف على السقالة؟\n"
+    "English: Does the worker need fall protection while standing on the scaffold?\n\n"
+
+    "Arabizi: el 3amel lazem yelbes harness fo2 scaffold?\n"
+    "English: Does the worker need a safety harness while working on a scaffold?"
+)
+
+
+def query_translator_human_prompt(clean_query: str, detected_language: str) -> str:
+    return (
+        f"Detected Language: {detected_language}\n\n"
+        "Translate the following cleaned user query into precise English for OSHA retrieval.\n\n"
+        f"Cleaned User Query:\n{clean_query}\n\n"
+        "English Retrieval Query:"
+    )
+
+# ==========================================
+# 9. RESPONSE TRANSLATOR PROMPTS
+# ==========================================
+
+response_translator_system_prompt = (
+    "You are a professional technical translator for OSHA construction safety compliance reports.\n\n"
+
+    "Your task is to translate an English compliance response into the user's original language "
+    "while preserving the exact legal, safety, and technical meaning.\n\n"
+
+    "Critical rules:\n"
+    "- Do not add any new facts.\n"
+    "- Do not remove any warnings, limitations, uncertainty, or safety instructions.\n"
+    "- Do not change OSHA standard numbers.\n"
+    "- Keep references such as '29 CFR 1926.501(b)(1)' exactly unchanged.\n"
+    "- Keep measurements, numbers, dates, percentages, and units exactly unchanged.\n"
+    "- Preserve bullet structure, headings, and professional formatting.\n"
+    "- Preserve technical terms when translation would reduce clarity.\n"
+    "- If the target language is Arabic, use clear Modern Standard Arabic with natural technical wording.\n"
+    "- If the original user language was Egyptian Arabic, you may keep the response professional Arabic, not slang.\n"
+    "- Do not summarize.\n"
+    "- Do not explain the translation.\n"
+    "- Output only the translated response.\n\n"
+
+    "The translated answer must remain legally cautious and technically precise."
+)
+
+
+def response_translator_human_prompt(
+    english_response: str,
+    target_language: str,
+    target_language_code: str
+) -> str:
+    return (
+        f"Target Language Name: {target_language}\n"
+        f"Target Language Code: {target_language_code}\n\n"
+        "Translate the following English OSHA compliance response into the target language.\n"
+        "Preserve all legal references, OSHA section numbers, measurements, and formatting.\n\n"
+        f"English Compliance Response:\n{english_response}\n\n"
+        "Translated Response:"
+    )

@@ -13,6 +13,7 @@ from presidio_anonymizer import AnonymizerEngine
 from PIL import Image 
 from presidio_image_redactor import ImageRedactorEngine
 from gptcache import cache
+from lingua import Language, LanguageDetectorBuilder
 from prompt import *
 from models import *
 
@@ -41,6 +42,48 @@ def hyb_retriver_agent (state:State) -> str :
 
     return{'context':reranked_response}
 
+language_detector = LanguageDetectorBuilder.from_languages(
+    Language.ENGLISH,
+    Language.ARABIC,
+    Language.FRENCH,
+    Language.SPANISH,
+    Language.GERMAN
+).build()
+
+
+def local_language_detector_agent(state: State) -> dict:
+    query = state.get("query", "")
+
+    detected = language_detector.detect_language_of(query)
+
+    if detected is None:
+        return {
+            "language": "English",
+            "language_code": "en",
+            "origin_en": True
+        }
+
+    lang_name = detected.name.capitalize()
+    lang_code = detected.iso_code_639_1.name.lower()
+
+    return {
+        "language": lang_name,
+        "language_code": lang_code,
+        "origin_en": lang_code == "en"
+    }
+    
+def user_query_translator (state:State):
+    query = state.get('clean_query')
+    lang = state.get('language')
+
+    messages = [
+        SystemMessage(content=query_translator_system_prompt),
+        HumanMessage(content=query_translator_human_prompt(clean_query=query,detected_language=lang))
+    ]
+
+    respond = llm.invoke(messages)
+    return{"eng_query":respond.text}
+
 def check_cache_agent(state:State) -> dict[str,any] :
     query = state.get('merged')
 
@@ -53,8 +96,11 @@ def check_cache_agent(state:State) -> dict[str,any] :
     
 def query_pii_agent(state:State) -> str :
     query = state.get('query')
+    lang_code = state.get('language_code',"en")
+    
     ana_result = analyzer.analyze(
-        text=query,language="en"
+        text=query,
+        language=lang_code
     )
     anon_results = anonymizer.anonymize(query,ana_result)
     cl_text = anon_results.text
@@ -75,7 +121,7 @@ def image_pii_agent (state:State) ->str:
     return{"image_bytes_cleaned" : clean_img_bytes_base64}
 
 def rewrite_agent (state:State) -> str :
-    query = state.get('clean_query')
+    query = state.get('eng_query')
     chat_hist = state.get('chat_hist')
 
     messages = [
@@ -156,6 +202,18 @@ def responser_agent (state:State) -> str:
     res = response.content
 
     return {'response': res}
+
+def response_translator (state:State):
+    response = state.get('response')
+    language = state.get('language')
+    lang_code = state.get('language_code')
+
+    messages = [
+        SystemMessage(content=response_translator_system_prompt),
+        HumanMessage(content=response_translator_human_prompt(english_response=response,target_language=language,target_language_code=lang_code))
+    ]
+    response = llm.invoke(messages)
+    return {"native_response":response.text}
 
 def caching_agent (state:State) -> dict[str,any]:
     caching_stat = state.get('cached')

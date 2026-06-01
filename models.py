@@ -6,8 +6,11 @@ from pydantic import BaseModel
 class State (TypedDict):
     query : Optional[str]
     cached : Optional[bool]
+    language : Optional[str]
+    language_code: Optional[str]
     clean_query : Optional[str]
     chat_hist : Annotated[list,add_messages]
+    eng_query : Optional[str]
     image_bytes : Optional[str]
     image_bytes_cleaned : Optional[str]
     image_exp : Optional[str]
@@ -25,3 +28,6 @@ class descion (BaseModel):
 
 class rank (BaseModel):
     k: int    
+class language (BaseModel):
+    language : str
+    language_code: str 

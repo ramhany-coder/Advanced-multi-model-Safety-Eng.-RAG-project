@@ -1,20 +1,18 @@
 from langgraph.graph import START , END , StateGraph
-from asyncio import graph
-from asyncio import graph
 from models import *
 from agents import *
 from langsmith import traceable
 
-def entry_router (state:State) -> str :
+def entry_router (state:State) -> list[str] :
     image = state.get('image_bytes')
     query = state.get('query')
 
     if not image :
-        return 'query_rewritter'
+        return 'query'
     elif not query:
         return 'image'
     else :
-        return ['query_rewritter','image']
+        return ['query','image']
 
 def web_descion(state:State) -> str :
     web_stat = state.get('is_web')
@@ -32,6 +30,8 @@ def is_cached (state:State) -> str :
 class workflow():
     def __init__(self):
         self.responser = responser_agent
+        self.lang_detectore = local_language_detector_agent
+        self.user_query_trans = user_query_translator
         self.query_filter = query_pii_agent
         self.image_filter = image_pii_agent
         self.merger = merging_agent
@@ -41,14 +41,16 @@ class workflow():
         self.rewritter = rewrite_agent
         self.image = image_exp_agent
         self.web_searcher = web_scrapper_agent
-        self.cacheing_agent = caching_agent
+        self.caching_agent = caching_agent
         self.ranker = ranker_agent
-        self.entry = entry_router(state=State)
+        self.response_trans = response_translator
+        self.rejection_response = rejection_response_agent
 
     def compile (self):
         graph = StateGraph(State)
 
-        graph.add_node('entry_state',self.entry)
+        graph.add_node('lang_detect',self.lang_detectore)
+        graph.add_node('user_trans',self.user_query_trans)
         graph.add_node("cache_check", self.is_cache)
         graph.add_node('responser',self.responser)
         graph.add_node('query_filter',self.query_filter)
@@ -60,14 +62,19 @@ class workflow():
         graph.add_node('image',self.image)
         graph.add_node('web_searcher',self.web_searcher)
         graph.add_node('ranker',self.ranker)
+        graph.add_node('response_trans',self.response_trans)
         graph.add_node('caching',self.caching_agent)
+        graph.add_node('rejection_response',self.rejection_response)
 
-        graph.add_conditional_edges(START,'entry_state',{
-            'query_rewritter':'query_filter',
+        graph.add_conditional_edges(START,entry_router,{
+            'query':'lang_detect',
             'image': 'image_filter'
         })
 
-        graph.add_edge('query_filter','query_rewritter')
+        graph.add_edge('lang_detect','query_filter')
+        graph.add_edge('query_filter','user_trans')
+        graph.add_edge('user_trans','query_rewritter')
+    
         graph.add_edge('image_filter','image')
 
         graph.add_edge('query_rewritter','merger')
@@ -76,10 +83,9 @@ class workflow():
         graph.add_edge("merger", "cache_check")
 
         graph.add_conditional_edges("cache_check", is_cached, {
-            "jump": END,
+            "jump": 'response_trans',
             "continue": "k_web_getter"
         })
-
 
         graph.add_conditional_edges('k_web_getter',web_descion,{
             'use_web' : 'web_searcher',
@@ -89,19 +95,23 @@ class workflow():
         graph.add_edge('web_searcher','responser')
         graph.add_edge('retriver','responser')
 
-        graph.add_edge('responser','ranker')
+    
+        graph.add_edge("responser", "ranker")
 
-        graph.add_conditional_edges('ranker',ranker,{
-            'accepted': 'caching' ,
-            'rejected': END
+        graph.add_conditional_edges("ranker", ranker, {
+            "accepted": "caching",
+            "rejected": "rejection_response"
         })
 
-        graph.add_edge('caching',END)
+        graph.add_edge("rejection_response",'response_trans')
+        graph.add_edge("caching", "response_trans")
+        graph.add_edge("response_trans", END)
+
         
         return graph.compile()
     
     @traceable
-    def run(self,intial_state=State):
+    def run(self,intial_state:State) -> dict[str,any] :
         graph = self.compile()
         result = graph.invoke(intial_state)
         return result
