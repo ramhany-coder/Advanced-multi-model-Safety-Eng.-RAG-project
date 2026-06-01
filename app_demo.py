@@ -3,9 +3,25 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-load_dotenv()
+import os
+import streamlit as st
+
+for key in [
+    "OPENAI_API_KEY",
+    "PINECONE_API_KEY",
+    "TAVILY_API_KEY",
+    "LANGCHAIN_API_KEY",
+    "LANGCHAIN_TRACING_V2",
+    "LANGCHAIN_PROJECT",
+]:
+    if key in st.secrets:
+        os.environ[key] = str(st.secrets[key])
 
 # Your latest project defines the class as `workflow`.
 # This fallback also supports older versions where the class may be named `WorkFlow`.
