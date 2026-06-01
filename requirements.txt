@@ -19,8 +19,8 @@ sentence-transformers
 
 presidio-analyzer
 presidio-anonymizer
-presidio-image-redactor
-opencv-python-headless
+
+
 
 Pillow
 gptcache
