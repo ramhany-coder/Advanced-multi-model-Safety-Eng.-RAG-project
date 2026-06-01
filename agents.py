@@ -7,7 +7,17 @@ from langchain_openai import ChatOpenAI
 from langchain_pinecone import PineconeRerank
 from langchain_tavily import TavilySearch
 from langchain_classic.retrievers import EnsembleRetriever
-from bm25_retriever.retriever import PersistentBM25Retriever
+import sys
+
+try:
+    import langchain_community.retrievers as community_retrievers
+    sys.modules["langchain.retrievers"] = community_retrievers
+except Exception:
+    pass
+try:
+    from bm25_retriever.retriever import PersistentBM25Retriever
+except Exception:
+    PersistentBM25Retriever = None
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from PIL import Image 
