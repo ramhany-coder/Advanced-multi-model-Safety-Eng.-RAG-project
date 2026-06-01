@@ -26,7 +26,7 @@ Pillow
 gptcache
 lingua-language-detector
 openai
-bm25-retriever
+
 
 langchain-tavily
 tavily-python
