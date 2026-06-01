@@ -1,11 +1,18 @@
 import base64
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-import os
-import streamlit as st
 
+# Page config should be the first Streamlit command
+st.set_page_config(
+    page_title="Multimodal OSHA RAG Assistant",
+    page_icon="🦺",
+    layout="wide",
+)
+
+# Load local .env safely
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -27,21 +34,26 @@ def load_streamlit_secrets():
     ]
 
     try:
-        secrets = st.secrets
         for key in secret_keys:
             try:
-                if key in secrets:
-                    os.environ[key] = str(secrets[key])
+                value = st.secrets.get(key, None)
+                if value:
+                    os.environ[key] = str(value)
             except Exception:
                 continue
     except Exception:
-        # No Streamlit secrets configured.
-        # Local .env or system environment variables will be used instead.
         pass
 
 
 load_streamlit_secrets()
 
+# Import workflow AFTER secrets are loaded
+try:
+    from workflow import workflow as WorkflowClass
+except Exception as e:
+    st.error("Could not import workflow class from workflow.py")
+    st.exception(e)
+    st.stop()
 # -----------------------------
 # Page Configuration
 # -----------------------------
