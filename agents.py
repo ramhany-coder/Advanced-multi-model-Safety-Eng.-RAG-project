@@ -16,6 +16,8 @@ from gptcache import cache
 from lingua import Language, LanguageDetectorBuilder
 from prompt import *
 from models import *
+from dotenv import load_dotenv
+load_dotenv()
 
 llm = ChatOpenAI(model='gpt-4o', temperature=0.2)
 emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
@@ -97,7 +99,7 @@ def check_cache_agent(state:State) -> dict[str,any] :
 def query_pii_agent(state:State) -> str :
     query = state.get('query')
     lang_code = state.get('language_code',"en")
-    
+
     ana_result = analyzer.analyze(
         text=query,
         language=lang_code
@@ -236,3 +238,23 @@ def ranker_agent(state:State) -> str :
 
     result : rank = llm_cons_rank.invoke(messages)
     return {'rank': result.k}
+
+def rejection_response_agent(state: State) -> dict:
+    """
+    Safe fallback response when the QA ranker rejects the generated answer.
+    This response is English only, then response_translator translates it.
+    Rejected responses should not be cached.
+    """
+    rank_value = state.get("rank", "unknown")
+
+    fallback = (
+        "I could not generate a sufficiently reliable OSHA-based compliance answer "
+        "from the retrieved context. The QA ranker marked the answer as low confidence "
+        f"(rank: {rank_value}). Please provide a clearer image, more site details, "
+        "or a more specific safety question so the system can retrieve stronger evidence."
+    )
+
+    return {
+        "response": fallback,
+        "rejected": True
+    }

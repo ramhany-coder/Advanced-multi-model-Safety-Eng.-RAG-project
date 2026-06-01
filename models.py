@@ -2,10 +2,13 @@ from typing import Annotated , Optional
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel
+from dotenv import load_dotenv
+load_dotenv()
 
 class State (TypedDict):
     query : Optional[str]
     cached : Optional[bool]
+    origin_en : Optional[bool]
     language : Optional[str]
     language_code: Optional[str]
     clean_query : Optional[str]
@@ -20,7 +23,9 @@ class State (TypedDict):
     context : Optional[list]
     rank : Optional[int]
     response : Optional[str]
+    native_response : Optional[str]
     is_web : Optional[bool]
+    rejected: Optional[bool]
 
 class descion (BaseModel):
     k : int
@@ -28,6 +33,3 @@ class descion (BaseModel):
 
 class rank (BaseModel):
     k: int    
-class language (BaseModel):
-    language : str
-    language_code: str 
