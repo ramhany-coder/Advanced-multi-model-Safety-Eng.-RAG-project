@@ -4,7 +4,11 @@ from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage , SystemMessage
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain_pinecone import PineconeRerank
+try:
+    from langchain_pinecone import PineconeRerank
+except Exception:
+    PineconeRerank = None
+    
 from langchain_tavily import TavilySearch
 from langchain_classic.retrievers import EnsembleRetriever
 import sys
@@ -21,7 +25,11 @@ except Exception:
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from PIL import Image 
-from presidio_image_redactor import ImageRedactorEngine
+try:
+    from presidio_image_redactor import ImageRedactorEngine
+except Exception:
+    ImageRedactorEngine = None
+
 from gptcache import cache
 from lingua import Language, LanguageDetectorBuilder
 from prompt import *
@@ -37,38 +45,77 @@ vbd_ret = Chroma(embedding_function=emb,
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
-image_pii = ImageRedactorEngine()
+image_pii = ImageRedactorEngine() if ImageRedactorEngine is not None else None
 
-def hyb_retriver_agent (state:State) -> str :
-    query = state.get('merged')
-    k = state.get('k',5)
-    if PersistentBM25Retriever is None:
-        dense_docs = dense_ret.invoke(query)
+def safe_rerank(documents, query: str, k: int):
+    """
+    Rerank documents if PineconeRerank is available.
+    Otherwise return the first k documents.
+    """
+    if not documents:
+        return []
 
+    if PineconeRerank is None:
+        return documents[:k]
+
+    try:
         reranker = PineconeRerank(
             model="bge-reranker-v2-m3",
             top_n=k
         )
 
-        reranked_response = reranker.compress_documents(
-            documents=dense_docs,
+        return reranker.compress_documents(
+            documents=documents,
             query=query
         )
+    except Exception:
+        return documents[:k]
+        
+def hyb_retriver_agent(state: State) -> dict:
+    query = state.get("merged") or ""
+    k = state.get("k", 5)
+
+    dense_ret = vbd_ret.as_retriever(
+        search_kwargs={"k": 10}
+    )
+
+    # If BM25 is not available on Streamlit Cloud, use dense-only fallback
+    if PersistentBM25Retriever is None:
+        dense_docs = dense_ret.invoke(query)
+        reranked_response = safe_rerank(dense_docs, query, k)
 
         return {
             "context": reranked_response,
             "retrieval_mode": "dense_only_fallback"
         }
-    dense_ret = vbd_ret.as_retriever(kwargs=10)
-    sparse_ret  = PersistentBM25Retriever().from_persist_dir(save_dir='osha_sparse',k=5)
 
-    hybrid_ret = EnsembleRetriever(retrievers=[dense_ret,sparse_ret],weights=[0.6,0.4])
-    respond = hybrid_ret.invoke(query)
+    try:
+        sparse_ret = PersistentBM25Retriever().from_persist_dir(
+            save_dir="osha_sparse",
+            k=5
+        )
 
-    reranker = PineconeRerank(model='bge-reranker-v2-m3',top_n=k)
-    reranked_response = reranker.compress_documents(documents=respond,query=query)
+        hybrid_ret = EnsembleRetriever(
+            retrievers=[dense_ret, sparse_ret],
+            weights=[0.6, 0.4]
+        )
 
-    return{'context':reranked_response}
+        docs = hybrid_ret.invoke(query)
+        reranked_response = safe_rerank(docs, query, k)
+
+        return {
+            "context": reranked_response,
+            "retrieval_mode": "hybrid_dense_sparse"
+        }
+
+    except Exception:
+        dense_docs = dense_ret.invoke(query)
+        reranked_response = safe_rerank(dense_docs, query, k)
+
+        return {
+            "context": reranked_response,
+            "retrieval_mode": "dense_only_fallback_after_bm25_error"
+        }
 
 language_detector = LanguageDetectorBuilder.from_languages(
     Language.ENGLISH,
@@ -110,7 +157,7 @@ def user_query_translator (state:State):
     ]
 
     respond = llm.invoke(messages)
-    return{"eng_query":respond.text}
+    return{"eng_query":respond.content}
 
 def check_cache_agent(state:State) -> dict[str,any] :
     query = state.get('merged')
@@ -122,31 +169,78 @@ def check_cache_agent(state:State) -> dict[str,any] :
     else :
         return {"cached":False}
     
-def query_pii_agent(state:State) -> str :
-    query = state.get('query')
-    lang_code = state.get('language_code',"en")
+def query_pii_agent(state: State) -> dict:
+    query = state.get("query") or ""
 
-    ana_result = analyzer.analyze(
-        text=query,
-        language=lang_code
-    )
-    anon_results = anonymizer.anonymize(query,ana_result)
-    cl_text = anon_results.text
-    return {"clean_query" : cl_text}
+    # MVP-safe fallback:
+    # Presidio default recognizers are strongest in English.
+    # Arabic production support should use custom recognizers.
+    presidio_lang = "en"
 
-def image_pii_agent (state:State) ->str:
-    image = state.get('image_bytes')
+    try:
+        ana_result = analyzer.analyze(
+            text=query,
+            language=presidio_lang
+        )
 
-    image_data = base64.b64decode(image)
-    pil_image = Image.open(io.BytesIO(image_data))
+        anon_results = anonymizer.anonymize(
+            text=query,
+            analyzer_results=ana_result
+        )
 
-    red_result = image_pii.redact(image=pil_image,fill="black")
+        return {
+            "clean_query": anon_results.text,
+            "pii_language_used": presidio_lang
+        }
 
-    buffered = io.BytesIO()
-    red_result.save(buffered, format="JPEG")
-    clean_img_bytes_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    except Exception:
+        return {
+            "clean_query": query,
+            "pii_language_used": "fallback_none"
+        }
+        
+def image_pii_agent(state: State) -> dict:
+    image = state.get("image_bytes")
 
-    return{"image_bytes_cleaned" : clean_img_bytes_base64}
+    if not image:
+        return {
+            "image_bytes_cleaned": None
+        }
+
+    # If Presidio image redactor / OpenCV fails on Streamlit Cloud,
+    # pass the original image through instead of crashing the app.
+    if image_pii is None:
+        return {
+            "image_bytes_cleaned": image,
+            "image_redaction_mode": "passthrough_no_redactor"
+        }
+
+    try:
+        image_data = base64.b64decode(image)
+        pil_image = Image.open(io.BytesIO(image_data))
+
+        red_result = image_pii.redact(
+            image=pil_image,
+            fill="black"
+        )
+
+        buffered = io.BytesIO()
+        red_result.save(buffered, format="JPEG")
+
+        clean_img_bytes_base64 = base64.b64encode(
+            buffered.getvalue()
+        ).decode("utf-8")
+
+        return {
+            "image_bytes_cleaned": clean_img_bytes_base64,
+            "image_redaction_mode": "presidio_redacted"
+        }
+
+    except Exception:
+        return {
+            "image_bytes_cleaned": image,
+            "image_redaction_mode": "passthrough_after_error"
+        }
 
 def rewrite_agent (state:State) -> str :
     query = state.get('eng_query')
@@ -208,14 +302,24 @@ def k_getter_use_web(state:State) -> str:
         'is_web' : results.is_web
     }
 
-def web_scrapper_agent (state:State) -> str :
-    query = state.get('merged')
-    k = state.get('k',3)
+def web_scrapper_agent(state: State) -> dict:
+    query = state.get("merged") or ""
+    k = state.get("k", 3)
 
-    tool = TavilySearch(kwargs=k)
-    respond = tool.invoke(query)
+    try:
+        tool = TavilySearch(max_results=k)
+        respond = tool.invoke(query)
 
-    return {'context':respond}
+        return {
+            "context": respond,
+            "retrieval_mode": "web_search"
+        }
+
+    except Exception:
+        return {
+            "context": [],
+            "retrieval_mode": "web_search_failed"
+        }
 
 def responser_agent (state:State) -> str:
     query = state.get('merged')
@@ -231,18 +335,34 @@ def responser_agent (state:State) -> str:
 
     return {'response': res}
 
-def response_translator (state:State):
-    response = state.get('response')
-    language = state.get('language')
-    lang_code = state.get('language_code')
+def response_translator(state: State) -> dict:
+    response = state.get("response") or ""
+    language = state.get("language") or "English"
+    lang_code = state.get("language_code") or "en"
+
+    if lang_code == "en":
+        return {
+            "native_response": response,
+            "final_response": response
+        }
 
     messages = [
         SystemMessage(content=response_translator_system_prompt),
-        HumanMessage(content=response_translator_human_prompt(english_response=response,target_language=language,target_language_code=lang_code))
+        HumanMessage(
+            content=response_translator_human_prompt(
+                english_response=response,
+                target_language=language,
+                target_language_code=lang_code
+            )
+        )
     ]
-    response = llm.invoke(messages)
-    return {"native_response":response.text}
 
+    translated = llm.invoke(messages)
+
+    return {
+        "native_response": translated.content,
+        "final_response": translated.content
+    }
 def caching_agent (state:State) -> dict[str,any]:
     caching_stat = state.get('cached')
     if not caching_stat :
