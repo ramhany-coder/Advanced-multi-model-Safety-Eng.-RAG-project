@@ -26,6 +26,13 @@ class State (TypedDict):
     native_response : Optional[str]
     is_web : Optional[bool]
     rejected: Optional[bool]
+    audio_bytes: Optional[str]
+    audio_format: Optional[str]
+    audio_transcript: Optional[str]
+    raw_audio_transcript: Optional[str]
+    audio_transcription_status: Optional[str]
+    audio_transcription_error: Optional[str]
+    clean_audio_transcript: Optional[str]
 
 class descion (BaseModel):
     k : int
