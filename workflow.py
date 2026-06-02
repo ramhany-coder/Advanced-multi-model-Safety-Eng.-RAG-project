@@ -6,13 +6,15 @@ from langsmith import traceable
 def entry_router (state:State) -> list[str] :
     image = state.get('image_bytes')
     query = state.get('query')
-
-    if not image :
+    audio = state.get('audio_bytes')
+    if not image & audio :
         return 'query'
-    elif not query:
+    elif not query & audio:
         return 'image'
+    elif not query & image
+        return 'audio'
     else :
-        return ['query','image']
+        return ['query','image','audio']
 
 def web_descion(state:State) -> str :
     web_stat = state.get('is_web')
@@ -30,6 +32,7 @@ def is_cached (state:State) -> str :
 class workflow():
     def __init__(self):
         self.responser = responser_agent
+        self.audio_trans = audio_transcription_agent
         self.lang_detectore = local_language_detector_agent
         self.user_query_trans = user_query_translator
         self.query_filter = query_pii_agent
@@ -51,6 +54,7 @@ class workflow():
 
         graph.add_node('lang_detect',self.lang_detectore)
         graph.add_node('user_trans',self.user_query_trans)
+        graph.add_node('audio_trans',self.audio_trans)
         graph.add_node("cache_check", self.is_cache)
         graph.add_node('responser',self.responser)
         graph.add_node('query_filter',self.query_filter)
@@ -68,9 +72,11 @@ class workflow():
 
         graph.add_conditional_edges(START,entry_router,{
             'query':'lang_detect',
-            'image': 'image_filter'
+            'image': 'image_filter',
+            'audio' : 'audio_trans'
         })
-
+        graph.add_edge('audio_trans','lang_detect')
+        
         graph.add_edge('lang_detect','query_filter')
         graph.add_edge('query_filter','user_trans')
         graph.add_edge('user_trans','query_rewritter')
