@@ -147,17 +147,27 @@ def local_language_detector_agent(state: State) -> dict:
         "origin_en": lang_code == "en"
     }
     
-def user_query_translator (state:State):
-    query = state.get('clean_query')
-    lang = state.get('language')
+def user_query_translator(state: State) -> dict:
+    query = state.get("clean_query") or ""
+    audio_transcript = state.get("audio_transcript") or ""
+    lang = state.get("language") or "Unknown"
 
     messages = [
         SystemMessage(content=query_translator_system_prompt),
-        HumanMessage(content=query_translator_human_prompt(clean_query=query,detected_language=lang))
+        HumanMessage(
+            content=query_translator_human_prompt(
+                clean_query=query,
+                audio_transcript=audio_transcript,
+                detected_language=lang
+            )
+        )
     ]
 
     respond = llm.invoke(messages)
-    return{"eng_query":respond.content}
+
+    return {
+        "eng_query": respond.content
+    }
 
 def check_cache_agent(state:State) -> dict[str,any] :
     query = state.get('merged')
@@ -242,19 +252,25 @@ def image_pii_agent(state: State) -> dict:
             "image_redaction_mode": "passthrough_after_error"
         }
 
-def rewrite_agent (state:State) -> str :
-    query = state.get('eng_query')
-    chat_hist = state.get('chat_hist')
+def rewrite_agent(state: State) -> dict:
+    query = state.get("eng_query") or ""
+    chat_hist = state.get("chat_hist") or []
 
     messages = [
         SystemMessage(content=rewrite_system_prompt),
-        HumanMessage(content=rewrite_human_prompt(query,chat_hist))
+        HumanMessage(
+            content=rewrite_human_prompt(
+                english_normalized_payload=query,
+                chat_hist=chat_hist
+            )
+        )
     ]
 
     response = llm.invoke(messages)
-    res = response.content
 
-    return {'rewritten_query' : res }
+    return {
+        "rewritten_query": response.content
+    }
 
 def image_exp_agent (state:State) -> str :
     img = state.get('image_bytes_cleaned')
