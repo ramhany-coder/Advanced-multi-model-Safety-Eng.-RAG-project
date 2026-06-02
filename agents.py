@@ -1,5 +1,8 @@
 import base64
 import io
+import base64
+import tempfile
+from openai import OpenAI
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage , SystemMessage
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -46,6 +49,114 @@ vbd_ret = Chroma(embedding_function=emb,
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 image_pii = ImageRedactorEngine() if ImageRedactorEngine is not None else None
+
+def audio_transcription_agent(state: State) -> dict:
+    """
+    Transcribes uploaded audio into text.
+
+    Expected state input:
+        audio_bytes: base64-encoded audio file
+        audio_format: mp3 / wav / m4a / webm / ogg
+
+    Output:
+        audio_transcript: clean transcript text
+
+    Notes:
+    - This node does not overwrite the typed user query.
+    - The query translator should later combine:
+        clean_query + clean_audio_transcript / audio_transcript
+    """
+
+    audio_b64 = state.get("audio_bytes")
+    audio_format = (state.get("audio_format") or "mp3").lower().replace(".", "")
+
+    if not audio_b64:
+        return {
+            "audio_transcript": ""
+        }
+
+    supported_formats = {"mp3", "wav", "m4a", "webm", "ogg", "mpeg", "mpga"}
+
+    if audio_format not in supported_formats:
+        audio_format = "mp3"
+
+    temp_path = None
+
+    try:
+        audio_data = base64.b64decode(audio_b64)
+
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{audio_format}",
+            delete=False
+        ) as temp_audio:
+            temp_audio.write(audio_data)
+            temp_audio.flush()
+            temp_path = temp_audio.name
+
+        client = OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY")
+        )
+
+        with open(temp_path, "rb") as audio_file:
+            transcription = client.audio.transcriptions.create(
+                model=os.environ.get(
+                    "OPENAI_TRANSCRIBE_MODEL",
+                    "gpt-4o-mini-transcribe"
+                ),
+                file=audio_file,
+                prompt=(
+                    "Transcribe this construction safety field note accurately. "
+                    "Preserve OSHA references, equipment names, measurements, "
+                    "Arabic/English mixed speech meaning, and uncertainty. "
+                    "Do not answer the question."
+                )
+            )
+
+        raw_transcript = getattr(transcription, "text", str(transcription)).strip()
+
+        # Optional cleanup using your existing LLM and prompt.py prompts.
+        # If cleanup fails, return raw transcript.
+        try:
+            cleanup_messages = [
+                SystemMessage(content=audio_transcription_system_prompt),
+                HumanMessage(
+                    content=(
+                        f"{audio_transcription_human_prompt()}\n\n"
+                        f"Raw Transcript:\n{raw_transcript}\n\n"
+                        "Clean Transcript:"
+                    )
+                )
+            ]
+
+            cleaned = llm.invoke(cleanup_messages).content.strip()
+
+            return {
+                "audio_transcript": cleaned,
+                "raw_audio_transcript": raw_transcript,
+                "audio_transcription_status": "success_cleaned"
+            }
+
+        except Exception:
+            return {
+                "audio_transcript": raw_transcript,
+                "raw_audio_transcript": raw_transcript,
+                "audio_transcription_status": "success_raw"
+            }
+
+    except Exception as e:
+        return {
+            "audio_transcript": "",
+            "audio_transcription_status": "failed",
+            "audio_transcription_error": str(e)
+        }
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
 
 def safe_rerank(documents, query: str, k: int):
     """
@@ -149,7 +260,11 @@ def local_language_detector_agent(state: State) -> dict:
     
 def user_query_translator(state: State) -> dict:
     query = state.get("clean_query") or ""
-    audio_transcript = state.get("audio_transcript") or ""
+    audio_transcript = (
+        state.get("clean_audio_transcript")
+        or state.get("audio_transcript")
+        or ""
+    )
     lang = state.get("language") or "Unknown"
 
     messages = [
@@ -178,36 +293,41 @@ def check_cache_agent(state:State) -> dict[str,any] :
                 "response":result}
     else :
         return {"cached":False}
-    
-def query_pii_agent(state: State) -> dict:
-    query = state.get("query") or ""
+def redact_text_with_presidio(text: str) -> str:
+    if not text:
+        return ""
 
-    # MVP-safe fallback:
-    # Presidio default recognizers are strongest in English.
-    # Arabic production support should use custom recognizers.
-    presidio_lang = "en"
+    if analyzer is None:
+        return text
 
     try:
-        ana_result = analyzer.analyze(
-            text=query,
-            language=presidio_lang
+        results = analyzer.analyze(
+            text=text,
+            language="en"
         )
 
-        anon_results = anonymizer.anonymize(
-            text=query,
-            analyzer_results=ana_result
+        anon = anonymizer.anonymize(
+            text=text,
+            analyzer_results=results
         )
 
-        return {
-            "clean_query": anon_results.text,
-            "pii_language_used": presidio_lang
-        }
+        return anon.text
 
     except Exception:
-        return {
-            "clean_query": query,
-            "pii_language_used": "fallback_none"
-        }
+        return text
+        
+def query_pii_agent(state: State) -> dict:
+    query = state.get("query") or ""
+    audio_transcript = state.get("audio_transcript") or ""
+
+    clean_query = redact_text_with_presidio(query)
+    clean_audio_transcript = redact_text_with_presidio(audio_transcript)
+
+    return {
+        "clean_query": clean_query,
+        "clean_audio_transcript": clean_audio_transcript,
+        "pii_language_used": "en"
+    }
         
 def image_pii_agent(state: State) -> dict:
     image = state.get("image_bytes")
