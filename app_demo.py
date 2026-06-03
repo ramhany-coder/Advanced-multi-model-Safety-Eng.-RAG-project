@@ -54,14 +54,6 @@ except Exception as e:
     st.error("Could not import workflow class from workflow.py")
     st.exception(e)
     st.stop()
-# -----------------------------
-# Page Configuration
-# -----------------------------
-st.set_page_config(
-    page_title="Multimodal OSHA RAG Assistant",
-    page_icon="🦺",
-    layout="wide",
-)
 
 st.title("🦺 Multimodal OSHA Compliance RAG Assistant")
 st.caption(
