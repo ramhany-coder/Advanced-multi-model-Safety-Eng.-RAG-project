@@ -508,13 +508,14 @@ def caching_agent (state:State) -> dict[str,any]:
 
 llm_cons_rank = llm.with_structured_output(rank)
 def ranker_agent(state:State) -> str :
-    query = state.get('clean_query')
+    query = state.get('eng_query')
     image = state.get('image_bytes_cleaned')
     response = state.get('response')
+    content = state.get('context')
 
     messages = [
         SystemMessage(content=ranker_system_prompt),
-        HumanMessage(content=ranker_humman_prompt(query,image,response))
+        HumanMessage(content=ranker_humman_prompt(query,image,response,content))
     ]
 
     result : rank = llm_cons_rank.invoke(messages)
