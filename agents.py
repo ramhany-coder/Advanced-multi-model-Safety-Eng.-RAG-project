@@ -509,7 +509,7 @@ def caching_agent (state:State) -> dict[str,any]:
 llm_cons_rank = llm.with_structured_output(rank)
 def ranker_agent(state:State) -> str :
     query = state.get('eng_query')
-    image = state.get('image_bytes_cleaned')
+    image = state.get('image_exp')
     response = state.get('response')
     content = state.get('context')
 
