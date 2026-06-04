@@ -209,9 +209,10 @@ query_translator_system_prompt = (
     "Input sources:\n"
     "1. Cleaned Written Query: may be empty if the user only provided audio.\n"
     "2. Audio Transcript: may be empty if the user only typed a question.\n\n"
+   
 
     "Translation rules:\n"
-    "- Translate Arabic, Egyptian Arabic, Arabizi, or any non-English content into English.\n"
+    "- Translate Arabic, Egyptian Arabic, Arabizi, or any non-English (in any language) content into English.\n"
     "- If content is already English, keep it in English and improve clarity only when needed.\n"
     "- Preserve all safety meaning exactly.\n"
     "- Preserve all numbers, measurements, dates, OSHA section numbers, and legal references exactly.\n"
@@ -242,10 +243,12 @@ query_translator_system_prompt = (
 def query_translator_human_prompt(
     clean_query: str,
     audio_transcript: str,
-    detected_language: str
+    detected_query_language: str,
+    detected_voice_language : str
 ) -> str:
     return (
-        f"Detected User Language: {detected_language}\n\n"
+        f"Detected User query Language: {detected_query_language}\n\n"
+        f"Detected User voice transscript Language: {detected_voice_language}\n\n"
         "Translate and normalize the following inputs into precise English for OSHA retrieval.\n\n"
         f"Cleaned Written Query:\n{clean_query or 'None provided.'}\n\n"
         f"Audio Transcript:\n{audio_transcript or 'None provided.'}\n\n"

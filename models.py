@@ -29,11 +29,9 @@ class State (TypedDict):
     audio_bytes: Optional[str]
     audio_format: Optional[str]
     audio_transcript: Optional[str]
-    raw_audio_transcript: Optional[str]
-    audio_transcription_status: Optional[str]
     audio_transcription_error: Optional[str]
     clean_audio_transcript: Optional[str]
-
+    detected_voice_language : Optional[str]
 class descion (BaseModel):
     k : int
     is_web : bool 

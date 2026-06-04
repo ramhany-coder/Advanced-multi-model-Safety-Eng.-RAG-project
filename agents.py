@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import io
 import base64
 import tempfile
@@ -30,10 +30,16 @@ from presidio_anonymizer import AnonymizerEngine
 from PIL import Image 
 try:
     from presidio_image_redactor import ImageRedactorEngine
-except Exception:
+except Exception  :
     ImageRedactorEngine = None
 
 from gptcache import cache
+try :
+    from faster_whisper import WhisperModel
+except Exception as e :
+    whispermodel = None
+    audio_transcription_error = str(e)
+
 from lingua import Language, LanguageDetectorBuilder
 from prompt import *
 from models import *
@@ -51,112 +57,28 @@ anonymizer = AnonymizerEngine()
 image_pii = ImageRedactorEngine() if ImageRedactorEngine is not None else None
 
 def audio_transcription_agent(state: State) -> dict:
-    """
-    Transcribes uploaded audio into text.
+    audio_bytes = state.get('audio_bytes',"")
+    audio_formate = state.get('audio_format',"")
 
-    Expected state input:
-        audio_bytes: base64-encoded audio file
-        audio_format: mp3 / wav / m4a / webm / ogg
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=audio_formate
+    )
 
-    Output:
-        audio_transcript: clean transcript text
+    temp_file.write(audio_bytes)
+    temp_file.flush()
+    temp_file.close()
+    audio_path = temp_file.name
 
-    Notes:
-    - This node does not overwrite the typed user query.
-    - The query translator should later combine:
-        clean_query + clean_audio_transcript / audio_transcript
-    """
+    model = WhisperModel("base",device='cpu',compute_type="int8")
 
-    audio_b64 = state.get("audio_bytes")
-    audio_format = (state.get("audio_format") or "mp3").lower().replace(".", "")
+    segments , info = model.transcribe(audio_path,beam_size=5, vad_filter=True)
 
-    if not audio_b64:
-        return {
-            "audio_transcript": ""
-        }
-
-    supported_formats = {"mp3", "wav", "m4a", "webm", "ogg", "mpeg", "mpga"}
-
-    if audio_format not in supported_formats:
-        audio_format = "mp3"
-
-    temp_path = None
-
-    try:
-        audio_data = base64.b64decode(audio_b64)
-
-        with tempfile.NamedTemporaryFile(
-            suffix=f".{audio_format}",
-            delete=False
-        ) as temp_audio:
-            temp_audio.write(audio_data)
-            temp_audio.flush()
-            temp_path = temp_audio.name
-
-        client = OpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY")
-        )
-
-        with open(temp_path, "rb") as audio_file:
-            transcription = client.audio.transcriptions.create(
-                model=os.environ.get(
-                    "OPENAI_TRANSCRIBE_MODEL",
-                    "gpt-4o-mini-transcribe"
-                ),
-                file=audio_file,
-                prompt=(
-                    "Transcribe this construction safety field note accurately. "
-                    "Preserve OSHA references, equipment names, measurements, "
-                    "Arabic/English mixed speech meaning, and uncertainty. "
-                    "Do not answer the question."
-                )
-            )
-
-        raw_transcript = getattr(transcription, "text", str(transcription)).strip()
-
-        # Optional cleanup using your existing LLM and prompt.py prompts.
-        # If cleanup fails, return raw transcript.
-        try:
-            cleanup_messages = [
-                SystemMessage(content=audio_transcription_system_prompt),
-                HumanMessage(
-                    content=(
-                        f"{audio_transcription_human_prompt()}\n\n"
-                        f"Raw Transcript:\n{raw_transcript}\n\n"
-                        "Clean Transcript:"
-                    )
-                )
-            ]
-
-            cleaned = llm.invoke(cleanup_messages).content.strip()
-
-            return {
-                "audio_transcript": cleaned,
-                "raw_audio_transcript": raw_transcript,
-                "audio_transcription_status": "success_cleaned"
-            }
-
-        except Exception:
-            return {
-                "audio_transcript": raw_transcript,
-                "raw_audio_transcript": raw_transcript,
-                "audio_transcription_status": "success_raw"
-            }
-
-    except Exception as e:
-        return {
-            "audio_transcript": "",
-            "audio_transcription_status": "failed",
-            "audio_transcription_error": str(e)
-        }
-
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-
+    transcript_final = " ".join(segment.text.strip() for segment in segments)
+    return {
+        "raw_audio_transcript" : transcript_final.strip(),
+      "detected_voice_language" : info.language
+    }
 
 def safe_rerank(documents, query: str, k: int):
     """
@@ -265,17 +187,17 @@ def user_query_translator(state: State) -> dict:
         or state.get("audio_transcript")
         or ""
     )
-    lang = state.get("language") or "Unknown"
+    user_lang = state.get("language") or "Unknown"
+    audio_lang = state.get("detected_voice_language")
 
     messages = [
         SystemMessage(content=query_translator_system_prompt),
         HumanMessage(
             content=query_translator_human_prompt(
                 clean_query=query,
-                audio_transcript=audio_transcript,
-                detected_language=lang
-            )
-        )
+                audio_transcript=audio_transcript ,
+                detected_query_language= user_lang ,
+                detected_voice_language = audio_lang ))
     ]
 
     respond = llm.invoke(messages)
