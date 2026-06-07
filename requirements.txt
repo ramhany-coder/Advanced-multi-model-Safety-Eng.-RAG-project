@@ -22,6 +22,9 @@ presidio-analyzer
 presidio-anonymizer
 
 
+langchain-openai
+openai
+
 
 Pillow
 gptcache
