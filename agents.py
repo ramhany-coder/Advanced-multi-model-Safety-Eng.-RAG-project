@@ -36,6 +36,7 @@ except Exception  :
 
 from gptcache import cache
 from gptcache.adapter.api import get as cache_get, put as cache_put
+from gptcache.processor.pre import get_prompt
 
 try :
     from faster_whisper import WhisperModel
