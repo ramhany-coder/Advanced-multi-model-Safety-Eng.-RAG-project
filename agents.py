@@ -57,6 +57,8 @@ llm = ChatOpenAI(
 )
 emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
 
+cache.init(pre_embedding_func=get_prompt)
+
 vbd_ret = Chroma(embedding_function=emb,
                  persist_directory='osha')
 
