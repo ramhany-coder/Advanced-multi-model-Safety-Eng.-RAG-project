@@ -1,5 +1,6 @@
 from pathlib import Path
 import io
+import os
 import base64
 import tempfile
 from openai import OpenAI
@@ -46,7 +47,12 @@ from models import *
 from dotenv import load_dotenv
 load_dotenv()
 
-llm = ChatOpenAI(model='gpt-4o', temperature=0.2)
+llm = ChatOpenAI(
+    model="llama-3.1-8b-instant",
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1",
+    temperature=0.1
+)
 emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
 
 vbd_ret = Chroma(embedding_function=emb,
