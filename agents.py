@@ -35,6 +35,8 @@ except Exception  :
     ImageRedactorEngine = None
 
 from gptcache import cache
+from gptcache.adapter.api import get as cache_get, put as cache_put
+
 try :
     from faster_whisper import WhisperModel
 except Exception as e :
@@ -221,7 +223,7 @@ def user_query_translator(state: State) -> dict:
 def check_cache_agent(state:State) -> dict[str,any] :
     query = state.get('merged')
 
-    result = cache.get(query)
+    result = cache_get(query)
     if result :
         return {'cached':True,
                 "response":result}
@@ -438,7 +440,7 @@ def caching_agent (state:State) -> dict[str,any]:
         query = state.get('merged')
         response = state.get('response')
         if response and query :
-            cache.import_data([query],[response])
+            cache_(query,response)
 
 llm_cons_rank = llm.with_structured_output(rank)
 def ranker_agent(state:State) -> str :
