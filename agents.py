@@ -65,25 +65,26 @@ def audio_transcription_agent(state: State) -> dict:
           "detected_voice_language" :""}
         
     else :
-        temp_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=audio_formate
-        )
-    
-        temp_file.write(audio_bytes)
-        temp_file.flush()
-        temp_file.close()
-        audio_path = temp_file.name
-    
-        model = WhisperModel("base",device='cpu',compute_type="int8")
-    
-        segments , info = model.transcribe(audio_path,beam_size=5, vad_filter=True)
-    
-        transcript_final = " ".join(segment.text.strip() for segment in segments)
-        return {
-            "raw_audio_transcript" : transcript_final.strip(),
-          "detected_voice_language" : info.language
-        }
+        if audio_bytes :
+            temp_file = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=audio_formate
+            )
+        
+            temp_file.write(audio_bytes)
+            temp_file.flush()
+            temp_file.close()
+            audio_path = temp_file.name
+        
+            model = WhisperModel("base",device='cpu',compute_type="int8")
+        
+            segments , info = model.transcribe(audio_path,beam_size=5, vad_filter=True)
+        
+            transcript_final = " ".join(segment.text.strip() for segment in segments)
+            return {
+                "raw_audio_transcript" : transcript_final.strip(),
+              "detected_voice_language" : info.language
+            }
 
 def safe_rerank(documents, query: str, k: int):
     """
