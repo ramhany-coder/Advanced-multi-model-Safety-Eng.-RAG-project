@@ -49,7 +49,7 @@ load_streamlit_secrets()
 
 # Import workflow AFTER secrets are loaded
 try:
-    from workflow import workflow as WorkflowClass
+    from workflow import Workflow as WorkflowClass
 except Exception as e:
     st.error("Could not import workflow class from workflow.py")
     st.exception(e)
