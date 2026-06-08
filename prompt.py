@@ -142,12 +142,13 @@ ranker_system_prompt = (
     "Assign a strict compliance confidence rank according to your model structure."
 )
 
-def ranker_humman_prompt(query: str, image_bytes_cleaned: str, response: str) -> str:
+def ranker_humman_prompt(query: str, image_bytes_cleaned: str, response: str,context:list[str]) -> str:
     image = image_bytes_cleaned[:100] if image_bytes_cleaned else "No image provided"
     return (
         f"Original Clean Query:\n{query}\n\n"
         f"Cleaned Image Data Snippet:\n{image}\n\n"
         f"Generated Compliance Response:\n{response}\n\n"
+        f"retrived content:\n{response}\n\n"
         f"Evaluate the alignment and output your structured ranking metadata parameters:"
     )
 
