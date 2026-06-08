@@ -362,21 +362,52 @@ def merging_agent (state:State) -> str :
 
     return {'merged' : res }
 
-llm_cons = llm.with_structured_output(descion)
-def k_getter_use_web(state:State) -> str:
-    query = state.get('merged')
+# llm_cons = llm.with_structured_output(descion)
+# def k_getter_use_web(state:State) -> str:
+#     query = state.get('merged')
 
-    messages = [ 
+#     messages = [ 
+#         SystemMessage(content=k_web_system_prompt),
+#         HumanMessage(content=k_web_humman(query))
+#     ]
+
+#     results : descion = llm_cons.invoke(messages)
+#     return {
+#         'k' : results.k ,
+#         'is_web' : results.is_web
+#     }
+
+llm_json = llm.bind(response_format={"type": "json_object"})
+def k_getter_use_web(state: State) -> dict:
+    query = state.get("merged") or ""
+
+    messages = [
         SystemMessage(content=k_web_system_prompt),
-        HumanMessage(content=k_web_humman(query))
+        HumanMessage(
+            content=(
+                k_web_humman(query)
+                + '\n\nReturn ONLY valid JSON in this exact shape: '
+                + '{"k": 3, "is_web": true}'
+            )
+        )
     ]
 
-    results : descion = llm_cons.invoke(messages)
-    return {
-        'k' : results.k ,
-        'is_web' : results.is_web
-    }
+    try:
+        response = llm_json.invoke(messages)
+        data = json.loads(response.content)
+        results = descion.model_validate(data)
 
+        return {
+            "k": int(results.k),
+            "is_web": bool(results.is_web)
+        }
+
+    except Exception as e:
+        return {
+            "k": 3,
+            "is_web": False,
+            "structured_output_error": str(e)
+        }
 def web_scrapper_agent(state: State) -> dict:
     query = state.get("merged") or ""
     k = state.get("k", 3)
@@ -445,21 +476,51 @@ def caching_agent (state:State) -> dict[str,any]:
         if response and query :
             cache_(query,response)
 
-llm_cons_rank = llm.with_structured_output(rank)
-def ranker_agent(state:State) -> str :
-    query = state.get('eng_query')
-    image = state.get('image_exp')
-    response = state.get('response')
-    content = state.get('context')
+# llm_cons_rank = llm.with_structured_output(rank)
+# def ranker_agent(state:State) -> str :
+#     query = state.get('eng_query')
+#     image = state.get('image_exp')
+#     response = state.get('response')
+#     content = state.get('context')
+
+#     messages = [
+#         SystemMessage(content=ranker_system_prompt),
+#         HumanMessage(content=ranker_humman_prompt(query,image,response,content))
+#     ]
+
+#     result : rank = llm_cons_rank.invoke(messages)
+#     return {'rank': result.k}
+def ranker_agent(state: State) -> dict:
+    query = state.get("eng_query")
+    image = state.get("image_exp")
+    response = state.get("response")
+    content = state.get("context")
 
     messages = [
         SystemMessage(content=ranker_system_prompt),
-        HumanMessage(content=ranker_humman_prompt(query,image,response,content))
+        HumanMessage(
+            content=(
+                ranker_humman_prompt(query, image, response, content)
+                + '\n\nReturn ONLY valid JSON in this exact shape: '
+                + '{"k": 8}'
+            )
+        )
     ]
 
-    result : rank = llm_cons_rank.invoke(messages)
-    return {'rank': result.k}
+    try:
+        result_response = llm_json.invoke(messages)
+        data = json.loads(result_response.content)
+        result = rank.model_validate(data)
 
+        return {
+            "rank": int(result.k)
+        }
+
+    except Exception as e:
+        return {
+            "rank": 0,
+            "ranker_error": str(e)
+        }
 def rejection_response_agent(state: State) -> dict:
     """
     Safe fallback response when the QA ranker rejects the generated answer.
