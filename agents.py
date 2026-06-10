@@ -4,6 +4,7 @@ import os
 import base64
 import tempfile
 from openai import OpenAI
+import json
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage , SystemMessage
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -15,6 +16,7 @@ except Exception:
     
 from langchain_tavily import TavilySearch
 from langchain_classic.retrievers import EnsembleRetriever
+from langchain_community.retrievers import ParentDocumentRetriever
 import sys
 
 try:
@@ -48,13 +50,26 @@ from lingua import Language, LanguageDetectorBuilder
 from prompt import *
 from models import *
 from dotenv import load_dotenv
+from langchain_core.documents import Document
+from langchain_core.stores import InMemoryStore
 load_dotenv()
 
+# llm = ChatOpenAI(
+#     model="llama-3.1-8b-instant",
+#     api_key=os.environ["GROQ_API_KEY"],
+#     base_url="https://api.groq.com/openai/v1",
+#     temperature=0
+# )
+
+
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+
 llm = ChatOpenAI(
-    model="llama-3.1-8b-instant",
-    api_key=os.environ["GROQ_API_KEY"],
-    base_url="https://api.groq.com/openai/v1",
-    temperature=0.1
+    model=OLLAMA_MODEL,
+    api_key="ollama",
+    base_url=OLLAMA_BASE_URL,
+    temperature=0,
 )
 emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
 
@@ -121,15 +136,72 @@ def safe_rerank(documents, query: str, k: int):
     except Exception:
         return documents[:k]
         
+def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
+    """
+    Load parent OSHA documents from registry.json into an InMemoryStore.
+    ParentDocumentRetriever will use child metadata doc_id to fetch these parents.
+    """
+    with open(registry_path, "r", encoding="utf-8") as f:
+        registry = json.load(f)
+
+    parent_docstore = InMemoryStore()
+    items = []
+
+    if isinstance(registry, dict):
+        for doc_id, item in registry.items():
+            page_content = item.get("page_content") or item.get("full_text") or ""
+            metadata = item.get("metadata") or {}
+            metadata["doc_id"] = str(doc_id)
+
+            items.append((
+                str(doc_id),
+                Document(
+                    page_content=page_content,
+                    metadata=metadata
+                )
+            ))
+
+    elif isinstance(registry, list):
+        for i, item in enumerate(registry):
+            doc_id = str(item.get("doc_id") or item.get("parent_index") or i)
+            page_content = item.get("page_content") or item.get("full_text") or ""
+            metadata = dict(item)
+            metadata["doc_id"] = doc_id
+
+            items.append((
+                doc_id,
+                Document(
+                    page_content=page_content,
+                    metadata=metadata
+                )
+            ))
+
+    else:
+        raise TypeError("registry.json must be either dict or list.")
+
+    parent_docstore.mset(items)
+    return parent_docstore
+
 def hyb_retriver_agent(state: State) -> dict:
     query = state.get("merged") or ""
     k = state.get("k", 5)
+    
 
-    dense_ret = vbd_ret.as_retriever(
+    # أ. تهيئة الاتصال بالـ Vector Store (Chroma) والـ Embeddings
+    vbd_ret = Chroma(
+        collection_name="production_parent_child_store",
+        embedding_function=emb,
+        persist_directory="osha"
+    )
+    parent_docstore = load_parent_docstore("parent_store/registry.json")
+
+    dense_ret = ParentDocumentRetriever(
+        vectorstore=vbd_ret,
+        docstore=parent_docstore,
+        id_key="doc_id",
         search_kwargs={"k": 10}
     )
 
-    # If BM25 is not available on Streamlit Cloud, use dense-only fallback
     if PersistentBM25Retriever is None:
         dense_docs = dense_ret.invoke(query)
         reranked_response = safe_rerank(dense_docs, query, k)
@@ -139,17 +211,21 @@ def hyb_retriver_agent(state: State) -> dict:
             "retrieval_mode": "dense_only_fallback"
         }
 
+  
     try:
-        sparse_ret = PersistentBM25Retriever().from_persist_dir(
-            save_dir="osha_sparse",
-            k=5
+        sparse_ret = PersistentBM25Retriever.load(
+            save_dir="osha_sparse"
         )
+      
+        sparse_ret.k = 5 
 
+       
         hybrid_ret = EnsembleRetriever(
             retrievers=[dense_ret, sparse_ret],
             weights=[0.6, 0.4]
         )
 
+       
         docs = hybrid_ret.invoke(query)
         reranked_response = safe_rerank(docs, query, k)
 
@@ -158,7 +234,7 @@ def hyb_retriver_agent(state: State) -> dict:
             "retrieval_mode": "hybrid_dense_sparse"
         }
 
-    except Exception:
+    except Exception as e:
         dense_docs = dense_ret.invoke(query)
         reranked_response = safe_rerank(dense_docs, query, k)
 
@@ -166,7 +242,6 @@ def hyb_retriver_agent(state: State) -> dict:
             "context": reranked_response,
             "retrieval_mode": "dense_only_fallback_after_bm25_error"
         }
-
 language_detector = LanguageDetectorBuilder.from_languages(
     Language.ENGLISH,
     Language.ARABIC,
@@ -474,7 +549,7 @@ def caching_agent (state:State) -> dict[str,any]:
         query = state.get('merged')
         response = state.get('response')
         if response and query :
-            cache_(query,response)
+            cache_put(query,response)
 
 # llm_cons_rank = llm.with_structured_output(rank)
 # def ranker_agent(state:State) -> str :
