@@ -176,67 +176,81 @@ def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
 
 def hyb_retriver_agent(state: State) -> dict:
     query = state.get("merged") or ""
-    k = state.get("k", 5)
-    
+    k = int(state.get("k", 5) or 5)
 
-    # أ. تهيئة الاتصال بالـ Vector Store (Chroma) والـ Embeddings
+    # Protect query length
+    query = clamp_text(query)
+
+    # Load Chroma child chunk store
     vbd_ret = Chroma(
         collection_name="production_parent_child_store",
         embedding_function=emb,
         persist_directory="osha"
     )
+
+    # Load parent document registry
     parent_docstore = load_parent_docstore("parent_store/registry.json")
-    child_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=50
-)
-    dense_ret = ParentDocumentRetriever(
-    vectorstore=vbd_ret,
-    docstore=parent_docstore,
-    id_key="doc_id",
-    child_splitter=child_splitter,  # <-- required
-    search_kwargs={"k": 10}
-)
 
+    # Dense retriever over child chunks
+    dense_ret = vbd_ret.as_retriever(
+        search_kwargs={"k": max(10, k*3)}
+    )
+
+    # Helper: convert child chunks to parent documents
+    def children_to_parents(child_docs, max_parents):
+        parent_docs = []
+        seen_doc_ids = set()
+        for child in child_docs:
+            doc_id = child.metadata.get("doc_id")
+            if not doc_id or doc_id in seen_doc_ids:
+                continue
+            seen_doc_ids.add(doc_id)
+            parent = parent_docstore.mget([doc_id])[0]
+            if parent:
+                parent.metadata = dict(parent.metadata or {})
+                parent.metadata["matched_child_chunk_id"] = child.metadata.get("chunk_id")
+                parent.metadata["matched_child_chunk_type"] = child.metadata.get("chunk_type")
+                parent_docs.append(parent)
+            if len(parent_docs) >= max_parents:
+                break
+        return parent_docs
+
+    # If BM25 is unavailable, fallback to dense child retrieval
     if PersistentBM25Retriever is None:
-        dense_docs = dense_ret.invoke(query)
-        reranked_response = safe_rerank(dense_docs, query, k)
-
+        child_docs = dense_ret.invoke(query)
+        parent_docs = children_to_parents(child_docs, k)
+        reranked_response = safe_rerank(parent_docs, query, k)
         return {
             "context": reranked_response,
-            "retrieval_mode": "dense_only_fallback"
+            "retrieval_mode": "dense_child_to_parent"
         }
 
-  
     try:
-        sparse_ret = PersistentBM25Retriever.load(
-            save_dir="osha_sparse"
-        )
-      
-        sparse_ret.k = 5 
+        # Load sparse BM25 retriever
+        sparse_ret = PersistentBM25Retriever.load(save_dir="osha_sparse")
+        sparse_ret.k = max(5, k)
 
-       
+        # Hybrid ensemble
         hybrid_ret = EnsembleRetriever(
             retrievers=[dense_ret, sparse_ret],
             weights=[0.6, 0.4]
         )
-
-       
-        docs = hybrid_ret.invoke(query)
-        reranked_response = safe_rerank(docs, query, k)
-
+        retrieved_docs = hybrid_ret.invoke(query)
+        parent_docs = children_to_parents(retrieved_docs, k)
+        reranked_response = safe_rerank(parent_docs, query, k)
         return {
             "context": reranked_response,
-            "retrieval_mode": "hybrid_dense_sparse"
+            "retrieval_mode": "hybrid_child_to_parent"
         }
 
     except Exception as e:
-        dense_docs = dense_ret.invoke(query)
-        reranked_response = safe_rerank(dense_docs, query, k)
-
+        child_docs = dense_ret.invoke(query)
+        parent_docs = children_to_parents(child_docs, k)
+        reranked_response = safe_rerank(parent_docs, query, k)
         return {
             "context": reranked_response,
-            "retrieval_mode": "dense_only_fallback_after_bm25_error"
+            "retrieval_mode": "dense_child_to_parent_after_bm25_error",
+            "bm25_error": str(e)
         }
 language_detector = LanguageDetectorBuilder.from_languages(
     Language.ENGLISH,
