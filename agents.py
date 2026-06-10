@@ -51,7 +51,6 @@ from prompt import *
 from models import *
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from langchain_core.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.stores import InMemoryStore
 load_dotenv()
 
