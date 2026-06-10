@@ -17,7 +17,7 @@ torchvision
 faster-whisper==1.2.1
 chromadb
 sentence-transformers
-
+langchain-text-splitters
 presidio-analyzer
 presidio-anonymizer
 
