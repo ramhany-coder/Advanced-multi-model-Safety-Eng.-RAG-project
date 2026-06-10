@@ -51,6 +51,7 @@ from prompt import *
 from models import *
 from dotenv import load_dotenv
 from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.stores import InMemoryStore
 load_dotenv()
 
@@ -185,13 +186,17 @@ def hyb_retriver_agent(state: State) -> dict:
         persist_directory="osha"
     )
     parent_docstore = load_parent_docstore("parent_store/registry.json")
-
+    child_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=50
+)
     dense_ret = ParentDocumentRetriever(
-        vectorstore=vbd_ret,
-        docstore=parent_docstore,
-        id_key="doc_id",
-        search_kwargs={"k": 10}
-    )
+    vectorstore=vbd_ret,
+    docstore=parent_docstore,
+    id_key="doc_id",
+    child_splitter=child_splitter,  # <-- required
+    search_kwargs={"k": 10}
+)
 
     if PersistentBM25Retriever is None:
         dense_docs = dense_ret.invoke(query)
