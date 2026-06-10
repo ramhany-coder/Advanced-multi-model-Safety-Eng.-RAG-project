@@ -1,0 +1,15 @@
+agents_local.py
+venv/
+__pycache__/
+*.pyc
+*.pyo   
+*.pyd
+.Python
+env/
+build/
+dist/
+*.egg-info/
+osha_raw_documents/
+test_model.py
+merged_cached_db/merged_cache_db/
+osha/chroma.sqlite3

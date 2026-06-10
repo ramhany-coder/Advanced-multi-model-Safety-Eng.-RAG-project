@@ -6,25 +6,7 @@ from langgraph.graph import START, END, StateGraph
 from langsmith import traceable
 
 from models import State
-from agents import (
-    audio_transcription_agent,
-    caching_agent,
-    check_cache_agent,
-    hyb_retriver_agent,
-    image_exp_agent,
-    image_pii_agent,
-    k_getter_use_web,
-    language_detector,
-    merging_agent,
-    query_pii_agent,
-    ranker_agent,
-    rejection_response_agent,
-    responser_agent,
-    response_translator,
-    rewrite_agent,
-    user_query_translator,
-    web_scrapper_agent,
-)
+from agents_local import*
 
 
 EntryRoute = Literal[
@@ -337,3 +319,12 @@ class Workflow:
 
 
 workflow = Workflow
+
+client = workflow()
+
+print(client.run(State(
+    query="i am in construction site for ORASCOM company,What are OSHA requirements for personal fall arrest system anchorage, free fall distance, and inspection?",
+    audio_bytes=None,
+    image_bytes=None,
+    is_web=False,
+)))

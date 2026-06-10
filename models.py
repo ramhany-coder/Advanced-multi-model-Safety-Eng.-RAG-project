@@ -21,6 +21,8 @@ class State (TypedDict):
     merged : Optional[str]
     k : Optional[int]
     context : Optional[list]
+    retrieval_mode : Optional[str]
+    bm25_error : Optional[str]
     rank : Optional[int]
     response : Optional[str]
     native_response : Optional[str]
