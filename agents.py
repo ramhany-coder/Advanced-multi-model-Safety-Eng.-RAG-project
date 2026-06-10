@@ -16,7 +16,7 @@ except Exception:
     
 from langchain_tavily import TavilySearch
 from langchain_classic.retrievers import EnsembleRetriever
-from langchain_community.retrievers import ParentDocumentRetriever
+from langchain_classic.retrievers import ParentDocumentRetriever
 import sys
 
 try:
