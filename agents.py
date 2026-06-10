@@ -43,7 +43,7 @@ from gptcache.processor.pre import get_prompt
 try :
     from faster_whisper import WhisperModel
 except Exception as e :
-    whispermodel = None
+    WhisperModel = None
     audio_transcription_error = str(e)
 
 from lingua import Language, LanguageDetectorBuilder
@@ -54,23 +54,14 @@ from langchain_core.documents import Document
 from langchain_core.stores import InMemoryStore
 load_dotenv()
 
-# llm = ChatOpenAI(
-#     model="llama-3.1-8b-instant",
-#     api_key=os.environ["GROQ_API_KEY"],
-#     base_url="https://api.groq.com/openai/v1",
-#     temperature=0
-# )
-
-
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-
 llm = ChatOpenAI(
-    model=OLLAMA_MODEL,
-    api_key="ollama",
-    base_url=OLLAMA_BASE_URL,
-    temperature=0,
+    model="llama-3.1-8b-instant",
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1",
+    temperature=0
 )
+
+
 emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
 
 cache.init(pre_embedding_func=get_prompt)
