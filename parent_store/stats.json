@@ -1,0 +1,12 @@
+{
+  "parent_docs": 374,
+  "subsection_evidence_units": 5818,
+  "dense_child_docs": 6192,
+  "sparse_bm25_docs": 5818,
+  "folder_names": {
+    "parent_store": "parent_store",
+    "vector_store": "osha",
+    "sparse_store": "osha_sparse"
+  },
+  "note": "Subsection ids are synthetic paragraph ids because current raw OSHA JSON does not preserve official paragraph labels."
+}

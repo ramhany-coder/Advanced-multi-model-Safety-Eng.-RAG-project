@@ -7,7 +7,7 @@ from langsmith import traceable
 
 from models import State
 from agents_local import*
-
+from hyb_retriver_agent import hyb_retriver_agent
 
 EntryRoute = Literal[
     "lang_detect",
@@ -322,9 +322,4 @@ workflow = Workflow
 
 client = workflow()
 
-print(client.run(State(
-    query="i am in construction site for ORASCOM company,What are OSHA requirements for personal fall arrest system anchorage, free fall distance, and inspection?",
-    audio_bytes=None,
-    image_bytes=None,
-    is_web=False,
-)))
+print(client.run(State(query="Safety requirements for arc welding",is_web=False)))

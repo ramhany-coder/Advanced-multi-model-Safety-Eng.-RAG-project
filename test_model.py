@@ -1,10 +1,17 @@
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from bm25_retriever import BM25Retriever
 
-print("start")
-
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={"device": "cpu"}
-)
-
-print("created")
+def test_bm25_retriever():
+    documents = [
+        {"text": "The cat sat on the mat."},
+        {"text": "The dog sat on the log."},
+        {"text": "The cat and the dog are friends."}
+    ]
+    retriever = BM25Retriever(documents)
+    
+    query = "cat mat"
+    results = retriever.retrieve(query, k=2)
+    
+    assert len(results) == 2
+    assert results[0]["text"] == "The cat sat on the mat."
+    assert results[1]["text"] == "The cat and the dog are friends."
+    print("BM25Retriever test passed.")
