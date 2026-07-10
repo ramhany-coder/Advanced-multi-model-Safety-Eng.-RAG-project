@@ -7,7 +7,7 @@ import json
 import sys
 import traceback
 from typing import Any, TypedDict
-
+from models import State
 from langchain_core.documents import Document
 from langchain_core.stores import InMemoryStore
 from langchain_chroma import Chroma
@@ -17,17 +17,6 @@ try:
     from langchain_classic.retrievers import EnsembleRetriever
 except Exception:
      EnsembleRetriever = None
-
-try:
-    from models import State
-except Exception:
-    class State(TypedDict, total=False):
-        query: str
-        merged: str
-        k: int
-        context: Any
-        retrieval_mode: str
-
 
 try:
     from langchain_pinecone import PineconeRerank
