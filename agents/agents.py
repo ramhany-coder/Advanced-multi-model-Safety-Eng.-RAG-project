@@ -1,107 +1,123 @@
-from pathlib import Path
-import io
 import os
+import io
+import json
 import base64
 import tempfile
-from openai import OpenAI
-import json
+import sys
+from pathlib import Path
+from PIL import Image 
+from dotenv import load_dotenv
+
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage , SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.documents import Document
+from langchain_core.stores import InMemoryStore
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
+from langchain_tavily import TavilySearch
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_classic.retrievers import ParentDocumentRetriever
+
+# ----------------------------------------------------------------------
+# 1. NEW FALLBACK TECHNOLOGY ASSIGNMENTS
+# Assign your primary and secondary models here. 
+# Available routers (based on your FallBack class): "groq", "gpt", "gemini", "ollama"
+# ----------------------------------------------------------------------
+PRIMARY_ROUTER = "groq"
+PRIMARY_MODEL = "llama-3.1-8b-instant"
+
+SECONDARY_ROUTER = "gpt"
+SECONDARY_MODEL = "gpt-4o-mini"
+
+FALLBACK_ORDER = [PRIMARY_ROUTER, SECONDARY_ROUTER]
+
+# Import your custom fallback class
+# (Adjust this import based on the actual filename of your fallback module)
+from fallback import FallBack  
+# ----------------------------------------------------------------------
+
 try:
     from langchain_pinecone import PineconeRerank
 except Exception:
     PineconeRerank = None
-    
-from langchain_tavily import TavilySearch
-from langchain_classic.retrievers import EnsembleRetriever
-from langchain_classic.retrievers import ParentDocumentRetriever
-import sys
 
 try:
     import langchain_community.retrievers as community_retrievers
     sys.modules["langchain.retrievers"] = community_retrievers
 except Exception:
     pass
+
 try:
     from bm25_retriever.retriever import PersistentBM25Retriever
 except Exception:
     PersistentBM25Retriever = None
+
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
-from PIL import Image 
+
 try:
     from presidio_image_redactor import ImageRedactorEngine
-except Exception  :
+except Exception:
     ImageRedactorEngine = None
 
 from gptcache import cache
 from gptcache.adapter.api import get as cache_get, put as cache_put
 from gptcache.processor.pre import get_prompt
 
-try :
+try:
     from faster_whisper import WhisperModel
-except Exception as e :
+except Exception as e:
     WhisperModel = None
     audio_transcription_error = str(e)
 
 from lingua import Language, LanguageDetectorBuilder
 from prompt import *
-from models import *
-from dotenv import load_dotenv
-from langchain_core.documents import Document
-from langchain_core.stores import InMemoryStore
+from models import *  # This imports descion, rank, etc.
+
 load_dotenv()
 
-llm = ChatOpenAI(
-    model="llama-3.1-8b-instant",
-    api_key=os.environ["GROQ_API_KEY"],
-    base_url="https://api.groq.com/openai/v1",
-    temperature=0
-)
+# ----------------------------------------------------------------------
+# 2. INITIALIZE FALLBACK MANAGERS
+# ----------------------------------------------------------------------
+# We pass the dynamically assigned routers/models into kwargs
+fallback_kwargs = {
+    f"llm_{PRIMARY_ROUTER}": PRIMARY_MODEL,
+    f"llm_{SECONDARY_ROUTER}": SECONDARY_MODEL
+}
 
+# Manager for regular text tasks
+text_llm = FallBack(**fallback_kwargs)
 
-emb = HuggingFaceEmbeddings(model_name = "sentence-transformers/all-MiniLM-L6-v2")
+# Manager for constrained decision output
+decision_llm = FallBack(**fallback_kwargs, constraine_model=descion)
 
+# Manager for constrained ranking output
+rank_llm = FallBack(**fallback_kwargs, constraine_model=rank)
+
+# ----------------------------------------------------------------------
+
+emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 cache.init(pre_embedding_func=get_prompt)
-
-vbd_ret = Chroma(embedding_function=emb,
-                 persist_directory='osha')
+vbd_ret = Chroma(embedding_function=emb, persist_directory='osha')
 
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 image_pii = ImageRedactorEngine() if ImageRedactorEngine is not None else None
 
-def audio_transcription_agent(state: State) -> dict:
-    audio_bytes = state.get('audio_bytes',"")
-    audio_formate = state.get('audio_format',"")
+from whisper import stt_model
+
+
+def audio_transcription_agent(state) -> dict:
+    audio_bytes = state.get('audio_bytes', "")
+    audio_format = state.get('audio_format', "")
     
-    if WhisperModel is None :
-        return {  "raw_audio_transcript" :"",
-          "detected_voice_language" :""}
-        
-    else :
-        if audio_bytes :
-            temp_file = tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=audio_formate
-            )
-        
-            temp_file.write(audio_bytes)
-            temp_file.flush()
-            temp_file.close()
-            audio_path = temp_file.name
-        
-            model = WhisperModel("base",device='cpu',compute_type="int8")
-        
-            segments , info = model.transcribe(audio_path,beam_size=5, vad_filter=True)
-        
-            transcript_final = " ".join(segment.text.strip() for segment in segments)
-            return {
-                "raw_audio_transcript" : transcript_final.strip(),
-              "detected_voice_language" : info.language
-            }
+    transcript_final, info = stt_model.transcript(
+        audio_bytes=audio_bytes,
+        audio_format=audio_format
+    )
+    return {
+        "raw_audio_transcript": transcript_final.strip(),
+        "detected_voice_language": info.language
+    }
 
 def safe_rerank(documents, query: str, k: int):
     """
@@ -119,7 +135,6 @@ def safe_rerank(documents, query: str, k: int):
             model="bge-reranker-v2-m3",
             top_n=k
         )
-
         return reranker.compress_documents(
             documents=documents,
             query=query
@@ -128,10 +143,6 @@ def safe_rerank(documents, query: str, k: int):
         return documents[:k]
         
 def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
-    """
-    Load parent OSHA documents from registry.json into an InMemoryStore.
-    ParentDocumentRetriever will use child metadata doc_id to fetch these parents.
-    """
     with open(registry_path, "r", encoding="utf-8") as f:
         registry = json.load(f)
 
@@ -143,13 +154,9 @@ def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
             page_content = item.get("page_content") or item.get("full_text") or ""
             metadata = item.get("metadata") or {}
             metadata["doc_id"] = str(doc_id)
-
             items.append((
                 str(doc_id),
-                Document(
-                    page_content=page_content,
-                    metadata=metadata
-                )
+                Document(page_content=page_content, metadata=metadata)
             ))
 
     elif isinstance(registry, list):
@@ -158,13 +165,9 @@ def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
             page_content = item.get("page_content") or item.get("full_text") or ""
             metadata = dict(item)
             metadata["doc_id"] = doc_id
-
             items.append((
                 doc_id,
-                Document(
-                    page_content=page_content,
-                    metadata=metadata
-                )
+                Document(page_content=page_content, metadata=metadata)
             ))
 
     else:
@@ -173,29 +176,25 @@ def load_parent_docstore(registry_path: str = "parent_store/registry.json"):
     parent_docstore.mset(items)
     return parent_docstore
 
-def hyb_retriver_agent(state: State) -> dict:
+def hyb_retriver_agent(state) -> dict:
     query = state.get("merged") or ""
     k = int(state.get("k", 5) or 5)
 
-    # Protect query length
+    # Protect query length (assuming clamp_text is imported/defined elsewhere)
     query = clamp_text(query)
 
-    # Load Chroma child chunk store
     vbd_ret = Chroma(
         collection_name="production_parent_child_store",
         embedding_function=emb,
         persist_directory="osha"
     )
 
-    # Load parent document registry
     parent_docstore = load_parent_docstore("parent_store/registry.json")
 
-    # Dense retriever over child chunks
     dense_ret = vbd_ret.as_retriever(
         search_kwargs={"k": max(10, k*3)}
     )
 
-    # Helper: convert child chunks to parent documents
     def children_to_parents(child_docs, max_parents):
         parent_docs = []
         seen_doc_ids = set()
@@ -214,7 +213,6 @@ def hyb_retriver_agent(state: State) -> dict:
                 break
         return parent_docs
 
-    # If BM25 is unavailable, fallback to dense child retrieval
     if PersistentBM25Retriever is None:
         child_docs = dense_ret.invoke(query)
         parent_docs = children_to_parents(child_docs, k)
@@ -225,11 +223,9 @@ def hyb_retriver_agent(state: State) -> dict:
         }
 
     try:
-        # Load sparse BM25 retriever
         sparse_ret = PersistentBM25Retriever.load(save_dir="osha_sparse")
         sparse_ret.k = max(5, k)
 
-        # Hybrid ensemble
         hybrid_ret = EnsembleRetriever(
             retrievers=[dense_ret, sparse_ret],
             weights=[0.6, 0.4]
@@ -251,6 +247,7 @@ def hyb_retriver_agent(state: State) -> dict:
             "retrieval_mode": "dense_child_to_parent_after_bm25_error",
             "bm25_error": str(e)
         }
+
 language_detector = LanguageDetectorBuilder.from_languages(
     Language.ENGLISH,
     Language.ARABIC,
@@ -260,9 +257,8 @@ language_detector = LanguageDetectorBuilder.from_languages(
 ).build()
 
 
-def local_language_detector_agent(state: State) -> dict:
+def local_language_detector_agent(state) -> dict:
     query = state.get("query", "")
-
     detected = language_detector.detect_language_of(query)
 
     if detected is None:
@@ -281,7 +277,7 @@ def local_language_detector_agent(state: State) -> dict:
         "origin_en": lang_code == "en"
     }
     
-def user_query_translator(state: State) -> dict:
+def user_query_translator(state) -> dict:
     query = state.get("clean_query") or ""
     audio_transcript = (
         state.get("clean_audio_transcript")
@@ -296,50 +292,41 @@ def user_query_translator(state: State) -> dict:
         HumanMessage(
             content=query_translator_human_prompt(
                 clean_query=query,
-                audio_transcript=audio_transcript ,
-                detected_query_language= user_lang ,
-                detected_voice_language = audio_lang ))
+                audio_transcript=audio_transcript,
+                detected_query_language=user_lang,
+                detected_voice_language=audio_lang
+            )
+        )
     ]
 
-    respond = llm.invoke(messages)
+    # Use the FallBack text manager
+    response = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
 
     return {
-        "eng_query": respond.content
+        "eng_query": response
     }
 
-def check_cache_agent(state:State) -> dict[str,any] :
+def check_cache_agent(state) -> dict[str, any]:
     query = state.get('merged')
-
     result = cache_get(query)
-    if result :
-        return {'cached':True,
-                "response":result}
-    else :
-        return {"cached":False}
+    if result:
+        return {'cached': True, "response": result}
+    else:
+        return {"cached": False}
+
 def redact_text_with_presidio(text: str) -> str:
     if not text:
         return ""
-
     if analyzer is None:
         return text
-
     try:
-        results = analyzer.analyze(
-            text=text,
-            language="en"
-        )
-
-        anon = anonymizer.anonymize(
-            text=text,
-            analyzer_results=results
-        )
-
+        results = analyzer.analyze(text=text, language="en")
+        anon = anonymizer.anonymize(text=text, analyzer_results=results)
         return anon.text
-
     except Exception:
         return text
         
-def query_pii_agent(state: State) -> dict:
+def query_pii_agent(state) -> dict:
     query = state.get("query") or ""
     audio_transcript = state.get("audio_transcript") or ""
 
@@ -352,16 +339,12 @@ def query_pii_agent(state: State) -> dict:
         "pii_language_used": "en"
     }
         
-def image_pii_agent(state: State) -> dict:
+def image_pii_agent(state) -> dict:
     image = state.get("image_bytes")
 
     if not image:
-        return {
-            "image_bytes_cleaned": None
-        }
+        return {"image_bytes_cleaned": None}
 
-    # If Presidio image redactor / OpenCV fails on Streamlit Cloud,
-    # pass the original image through instead of crashing the app.
     if image_pii is None:
         return {
             "image_bytes_cleaned": image,
@@ -372,30 +355,22 @@ def image_pii_agent(state: State) -> dict:
         image_data = base64.b64decode(image)
         pil_image = Image.open(io.BytesIO(image_data))
 
-        red_result = image_pii.redact(
-            image=pil_image,
-            fill="black"
-        )
-
+        red_result = image_pii.redact(image=pil_image, fill="black")
         buffered = io.BytesIO()
         red_result.save(buffered, format="JPEG")
-
-        clean_img_bytes_base64 = base64.b64encode(
-            buffered.getvalue()
-        ).decode("utf-8")
+        clean_img_bytes_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
         return {
             "image_bytes_cleaned": clean_img_bytes_base64,
             "image_redaction_mode": "presidio_redacted"
         }
-
     except Exception:
         return {
             "image_bytes_cleaned": image,
             "image_redaction_mode": "passthrough_after_error"
         }
 
-def rewrite_agent(state: State) -> dict:
+def rewrite_agent(state) -> dict:
     query = state.get("eng_query") or ""
     chat_hist = state.get("chat_hist") or []
 
@@ -409,16 +384,16 @@ def rewrite_agent(state: State) -> dict:
         )
     ]
 
-    response = llm.invoke(messages)
+    # Use the FallBack text manager
+    response = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
 
     return {
-        "rewritten_query": response.content
+        "rewritten_query": response
     }
 
-def image_exp_agent (state:State) -> str :
+def image_exp_agent(state) -> str:
     img = state.get('image_bytes_cleaned')
 
-    # Standard LangChain multimodal structure payload
     messages = [
         SystemMessage(content=image_system_prompt),
         HumanMessage(content=[
@@ -427,98 +402,72 @@ def image_exp_agent (state:State) -> str :
         ])
     ]
 
-    respond = llm.invoke(messages)
-    res = respond.content
+    # Use the FallBack text manager
+    response = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
+    return {'image_exp': response}
 
-    return{'image_exp': res}
-
-def merging_agent (state:State) -> str :
+def merging_agent(state) -> str:
     query = state.get('rewritten_query')
     img = state.get('image_exp')
 
-    if img :
+    if img:
         messages = [
-            SystemMessage(content = system_merging_prompt)
-            , HumanMessage(content=merging_humman_prompt(query,img))
+            SystemMessage(content=system_merging_prompt),
+            HumanMessage(content=merging_humman_prompt(query, img))
         ]
 
-        response = llm.invoke(messages)
-        res = response.content
+        # Use the FallBack text manager
+        response = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
+        return {'merged': response}
+    else:
+        return {'merged': query}
 
-        return {'merged' : res }
-    else :
-        return {'merged' : query }
-
-# llm_cons = llm.with_structured_output(descion)
-# def k_getter_use_web(state:State) -> str:
-#     query = state.get('merged')
-
-#     messages = [ 
-#         SystemMessage(content=k_web_system_prompt),
-#         HumanMessage(content=k_web_humman(query))
-#     ]
-
-#     results : descion = llm_cons.invoke(messages)
-#     return {
-#         'k' : results.k ,
-#         'is_web' : results.is_web
-#     }
-
-llm_json = llm.bind(response_format={"type": "json_object"})
-def k_getter_use_web(state: State) -> dict:
+def k_getter_use_web(state) -> dict:
     query = state.get("merged") or ""
-
     forced_is_web = state.get("is_web", None)
     has_forced_is_web = forced_is_web is not None
 
     messages = [
         SystemMessage(content=k_web_system_prompt),
-        HumanMessage(
-            content=(
-                k_web_humman(query)
-                + '\n\nReturn ONLY valid JSON in this exact shape: '
-                + '{"k": 8, "is_web": true}'
-            )
-        )
+        HumanMessage(content=k_web_humman(query)) 
+        # Note: I removed the extra JSON parsing suffix because .with_structured_output() handles it natively
     ]
 
     try:
-        response = llm_json.invoke(messages)
-        data = json.loads(response.content)
-        results = descion.model_validate(data)
+        # Use the FallBack Constrained Invoke Manager 
+        # (It will return a dictionary directly based on your Pydantic descion schema)
+        results = decision_llm.constrained_invoke(messages, fallback_order=FALLBACK_ORDER)
 
         return {
-            "k": int(results.k),
-            "is_web": bool(forced_is_web) if has_forced_is_web else bool(results.is_web)
+            "k": int(results["k"]),
+            "is_web": bool(forced_is_web) if has_forced_is_web else bool(results["is_web"])
         }
 
     except Exception as e:
         return {
             "k": 8,
             "is_web": bool(forced_is_web) if has_forced_is_web else False,
-
             "structured_output_error": str(e)
         }
-def web_scrapper_agent(state: State) -> dict:
+
+def web_scrapper_agent(state) -> dict:
     query = state.get("merged") or ""
     k = state.get("k", 8)
 
     try:
         tool = TavilySearch(max_results=k)
         respond = tool.invoke(query)
-
         return {
             "context": respond,
             "retrieval_mode": "web_search"
         }
-
     except Exception:
         return {
             "context": [],
             "retrieval_mode": "web_search_failed"
         }
 
-def responser_agent (state:State) -> str:
+def responser_agent(state) -> str:
     query = state.get('merged')
     context = state.get('context', [])
     
@@ -527,12 +476,12 @@ def responser_agent (state:State) -> str:
         HumanMessage(content=responser_humman_prompt(query, context))
     ]
 
-    response = llm.invoke(messages)
-    res = response.content
+    # Use the FallBack text manager
+    response = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
 
-    return {'response': res}
+    return {'response': response}
 
-def response_translator(state: State) -> dict:
+def response_translator(state) -> dict:
     response = state.get("response") or ""
     language = state.get("language") or "English"
     lang_code = state.get("language_code") or "en"
@@ -554,34 +503,23 @@ def response_translator(state: State) -> dict:
         )
     ]
 
-    translated = llm.invoke(messages)
+    # Use the FallBack text manager
+    translated = text_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
 
     return {
-        "native_response": translated.content
+        "native_response": translated
     }
-def caching_agent (state:State) -> dict[str,any]:
+
+def caching_agent(state) -> dict[str, any]:
     caching_stat = state.get('cached')
-    if not caching_stat :
+    if not caching_stat:
         query = state.get('merged')
         response = state.get('response')
-        if response and query :
-            cache_put(query,response)
+        if response and query:
+            cache_put(query, response)
 
-# llm_cons_rank = llm.with_structured_output(rank)
-# def ranker_agent(state:State) -> str :
-#     query = state.get('eng_query')
-#     image = state.get('image_exp')
-#     response = state.get('response')
-#     content = state.get('context')
 
-#     messages = [
-#         SystemMessage(content=ranker_system_prompt),
-#         HumanMessage(content=ranker_humman_prompt(query,image,response,content))
-#     ]
-
-#     result : rank = llm_cons_rank.invoke(messages)
-#     return {'rank': result.k}
-def ranker_agent(state: State) -> dict:
+def ranker_agent(state) -> dict:
     query = state.get("eng_query")
     image = state.get("image_exp")
     response = state.get("response")
@@ -589,22 +527,16 @@ def ranker_agent(state: State) -> dict:
 
     messages = [
         SystemMessage(content=ranker_system_prompt),
-        HumanMessage(
-            content=(
-                ranker_humman_prompt(query, image, response, content)
-                + '\n\nReturn ONLY valid JSON in this exact shape: '
-                + '{"k": 8}'
-            )
-        )
+        HumanMessage(content=ranker_humman_prompt(query, image, response, content))
+        # Note: Extra JSON manual parsing prompt was removed, handled by schema constraints
     ]
 
     try:
-        result_response = llm_json.invoke(messages)
-        data = json.loads(result_response.content)
-        result = rank.model_validate(data)
+        # Use the FallBack Constrained Invoke Manager bound to 'rank'
+        result = rank_llm.constrained_invoke(messages, fallback_order=FALLBACK_ORDER)
 
         return {
-            "rank": int(result.k)
+            "rank": int(result["k"])  # Assuming 'k' holds the rank score as per original code logic
         }
 
     except Exception as e:
@@ -612,11 +544,10 @@ def ranker_agent(state: State) -> dict:
             "rank": 0,
             "ranker_error": str(e)
         }
-def rejection_response_agent(state: State) -> dict:
+
+def rejection_response_agent(state) -> dict:
     """
     Safe fallback response when the QA ranker rejects the generated answer.
-    This response is English only, then response_translator translates it.
-    Rejected responses should not be cached.
     """
     rank_value = state.get("rank", "unknown")
 
