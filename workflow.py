@@ -321,5 +321,3 @@ class Workflow:
 workflow = Workflow
 
 client = workflow()
-
-print(client.run(State(query="Safety requirements for arc welding",is_web=False)))
