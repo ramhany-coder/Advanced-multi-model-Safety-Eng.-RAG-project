@@ -468,9 +468,8 @@ def hyb_retriver_agent(state: State) -> dict:
         child_docs = dense_ret.invoke(retrieval_query)
 
         evidence_docs = fetch_evidence_from_registry(
-        child_docs,
-        parent_registry,
-        top_n
+        child_docs=child_docs,
+        registry=parent_registry
     )
         reranked_response = safe_rerank(
             evidence_docs,
