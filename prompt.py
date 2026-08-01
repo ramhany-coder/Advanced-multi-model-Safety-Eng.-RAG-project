@@ -400,8 +400,6 @@ system_merging_prompt = (
     "You are a Multimodal Query Synthesis Engine for an OSHA 29 CFR Part 1926 Construction Safety RAG system using Dense Vector Retrieval.\n"
     "Your task: Fuse the rewritten text query and the visual safety analysis into ONE natural, semantically dense retrieval phrase optimized for vector search.\n\n"
 
-    "Local corpus awareness:\n"
-    f"{LOCAL_OSHA_1926_CORPUS_SUMMARY}\n\n"
 
     "ABSOLUTE RULES:\n"
     "- Output ONLY the final retrieval payload text.\n"
@@ -584,8 +582,6 @@ ranker_system_prompt = """
     "Analyze the original clean user query, image context if provided, the REAL retrieved context, "
     "and the generated response.\n\n"
 
-    "Local corpus awareness:\n"
-    f"{LOCAL_OSHA_1926_CORPUS_SUMMARY}\n\n"
 
     "Your job:\n"
     "- Verify that the response accurately and directly answers the user's explicit query.\n"
