@@ -3,7 +3,6 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import Literal, add_messages
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from interfaces.state_interface import State_interface
 from workflow import EntryRoute
 load_dotenv()
 
