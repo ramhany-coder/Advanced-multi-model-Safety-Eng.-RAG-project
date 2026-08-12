@@ -46,7 +46,8 @@ class rank (BaseModel):
 class has_value :
     def __init__(self, value: Optional[str]):
         pass
-    def __call__(self, value: Optional[str]) -> bool:
+    def __call__(self, value: Optional[str] = None
+                 ) -> bool:
         """Return True only when a state field contains real user input."""
         if value is None:
                 return False
@@ -96,7 +97,7 @@ class entry_router:
         if not (has_query or has_audio or has_image):
             return ["no_input"]
 
-        routes: list[EntryRoute] = []
+        routes: list[str] = []
 
         # Audio must run before text normalization because its transcript is part
         # of the text retrieval payload. If both query and audio exist, the typed
