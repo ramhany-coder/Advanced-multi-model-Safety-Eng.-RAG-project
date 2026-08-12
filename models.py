@@ -57,7 +57,7 @@ class has_value :
                 return bool(value)
         return bool(value)
     
-has_value_client = has_value()
+
 
 
 
@@ -90,9 +90,9 @@ class entry_router:
         request always activates exactly one text-side branch and one image-side
         branch.
         """
-        has_query = has_value_client(state.get("query"))
-        has_audio = has_value_client(state.get("audio_bytes"))
-        has_image = has_value_client(state.get("image_bytes"))
+        has_query = has_value(state.get("query"))
+        has_audio = has_value(state.get("audio_bytes"))
+        has_image = has_value(state.get("image_bytes"))
 
         if not (has_query or has_audio or has_image):
             return ["no_input"]
