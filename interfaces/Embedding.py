@@ -5,7 +5,7 @@ from agents.SingeltonLayer import SingeltonLayer
 
 class EmbeddingInterface (SingeltonLayer):
 
-    @abstractmethod
     @property
+    @abstractmethod
     def get_client() -> Embeddings:
         pass

@@ -1,5 +1,5 @@
 import tempfile
-from interfaces.Embedding import EmbeddingProvider
+from interfaces.Embedding import EmbeddingInterface
 
 
 

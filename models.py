@@ -12,6 +12,7 @@ class State (BaseModel):
     cached : Optional[bool]
     origin_en : Optional[bool]
     language : Optional[str]
+    section_ids : Optional[list[str]]
     language_code: Optional[str]
     clean_query : Optional[str]
     chat_hist : Annotated[list,add_messages]

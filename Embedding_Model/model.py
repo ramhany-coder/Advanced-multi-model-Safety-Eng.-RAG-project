@@ -33,4 +33,6 @@ class Embedding_Model(EmbeddingInterface):
         path = Path(path)
         return path
 
+local_embedding = Embedding_Model()
+
 
