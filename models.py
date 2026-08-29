@@ -83,9 +83,9 @@ class entry_router:
         request always activates exactly one text-side branch and one image-side
         branch.
         """
-        has_query = has_value(state.get("query"))
-        has_audio = has_value(state.get("audio_bytes"))
-        has_image = has_value(state.get("image_bytes"))
+        has_query = has_value()(state.get("query"))
+        has_audio = has_value()(state.get("audio_bytes"))
+        has_image = has_value()(state.get("image_bytes"))
 
         if not (has_query or has_audio or has_image):
             return ["no_input"]

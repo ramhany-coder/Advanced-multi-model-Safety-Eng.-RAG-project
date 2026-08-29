@@ -5,7 +5,7 @@ from typing import Any, Literal
 from langgraph.graph import START, END, StateGraph
 from langsmith import traceable
 
-from models import State, has_value_client, entry_router
+from models import State, has_value, entry_router
 from agents.Audio.agent import audio_transcription_agent
 from agents.LanguageDetector.agent import language_detector
 from agents.QueryTranslator.agent import user_query_translator
@@ -144,13 +144,13 @@ def rewrite_necessity_router(state: State) -> Literal["rewrite", "skip_rewrite"]
     performs the rewrite itself by combining the raw translated query with
     the image analysis (see safe_merging_agent).
     """
-    return "skip_rewrite" if has_value_client(state.get("image_bytes")) else "rewrite"
+    return "skip_rewrite" if has_value()(state.get("image_bytes")) else "rewrite"
 
 
 def merge_necessity_router(state: State) -> Literal["merge", "skip_merge"]:
     """The merger is only needed when an image was provided to combine with
     the text/audio query; otherwise the rewritten query is used directly."""
-    return "merge" if has_value_client(state.get("image_bytes")) else "skip_merge"
+    return "merge" if has_value()(state.get("image_bytes")) else "skip_merge"
 
 
 def safe_caching_agent(state: State) -> dict[str, Any]:
