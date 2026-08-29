@@ -24,7 +24,6 @@ def load_streamlit_secrets():
     secret_keys = [
         "OPENAI_API_KEY",
         "PINECONE_API_KEY",
-        "TAVILY_API_KEY",
         "LANGSMITH_API_KEY",
         "LANGCHAIN_API_KEY",
         "LANGSMITH_TRACING",
@@ -138,7 +137,6 @@ def build_initial_state(
         "merged": None,
         "k": None,
         "context": None,
-        "is_web": None,
         "cached": None,
 
         # Response fields
@@ -191,12 +189,11 @@ def render_result_metadata(result: Dict[str, Any]):
     """Render compact metadata after assistant response."""
     cached = result.get("cached")
     rank = result.get("rank")
-    is_web = result.get("is_web")
     language = result.get("language")
     language_code = result.get("language_code")
     k = result.get("k")
 
-    source = "Web Search" if is_web else "Local OSHA Knowledge Base"
+    source = "Local OSHA Knowledge Base"
     cache_status = "Cache hit" if cached else "Cache miss / new run"
 
     cols = st.columns(5)

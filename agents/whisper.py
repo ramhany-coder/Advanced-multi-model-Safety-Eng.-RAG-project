@@ -1,19 +1,24 @@
+import os
 from typing import Optional , Any
 from loggers import setup_logger
-from helpers import tempfile_creator
+from agents.helpers import tempfile_creator
 
 logging = setup_logger(__name__)
+
+# Small model: loads fast and downloads quickly, at some accuracy cost vs. larger
+# models. Bump to "small"/"base" if accuracy on noisy/accented audio is insufficient.
+DEFAULT_MODEL_SIZE = "tiny"
 
 
 class Whisper:
     model: Optional[Any] = None
-    model_size_or_path: str = "base"
+    model_size_or_path: str = DEFAULT_MODEL_SIZE
     device: str = "cpu"
     compute_type: str = "int8"
 
     def __init__(
         self,
-        model_size_or_path: str = "base",
+        model_size_or_path: str = DEFAULT_MODEL_SIZE,
         device: str = "cpu",
         compute_type: str = "int8",
     ):
@@ -68,8 +73,12 @@ class Whisper:
             # Ensure temporary file is cleaned up if tempfile_creator returns a file object
             if hasattr(temp_file, "close"):
                 temp_file.close()
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
 
 
-stt_model = Whisper(model_size_or_path="turbo",
+stt_model = Whisper(model_size_or_path=DEFAULT_MODEL_SIZE,
                         device="cpu",
                         compute_type="int8")

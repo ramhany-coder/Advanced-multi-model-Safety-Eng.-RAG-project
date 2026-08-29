@@ -1,19 +1,23 @@
 import os
 import io
 import json
+import re
 import base64
 import tempfile
 import sys
+import threading
+import queue
 from pathlib import Path
-from PIL import Image 
+from PIL import Image
 from dotenv import load_dotenv
+
+from loggers import setup_logger
 
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.documents import Document
 from langchain_core.stores import InMemoryStore
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_tavily import TavilySearch
 from langchain_classic.retrievers import EnsembleRetriever
 from langchain_classic.retrievers import ParentDocumentRetriever
 
@@ -32,7 +36,7 @@ FALLBACK_ORDER = [PRIMARY_ROUTER, SECONDARY_ROUTER]
 
 # Import your custom fallback class
 # (Adjust this import based on the actual filename of your fallback module)
-from fallback import FallBack  
+from agents.fallback import FallBack
 # ----------------------------------------------------------------------
 
 try:
@@ -72,6 +76,7 @@ except Exception as e:
 from lingua import Language, LanguageDetectorBuilder
 from prompt import *
 from models import *  # This imports descion, rank, etc.
+from agents.helpers import combine_evidence
 
 load_dotenv()
 
@@ -99,17 +104,78 @@ emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 cache.init(pre_embedding_func=get_prompt)
 vbd_ret = Chroma(embedding_function=emb, persist_directory='osha')
 
-analyzer = AnalyzerEngine()
-anonymizer = AnonymizerEngine()
-image_pii = ImageRedactorEngine() if ImageRedactorEngine is not None else None
+logger = setup_logger(__name__)
 
-from whisper import stt_model
+# Presidio's AnalyzerEngine() loads a spaCy NLP model on construction, which can
+# take a long time (or hang outright if the model/network dependency isn't
+# available). Building it at import time would block the whole process before
+# any request is served, so it's built lazily in a background thread the first
+# time PII redaction is actually needed, with a bounded wait per call.
+_PRESIDIO_INIT_TIMEOUT_SECONDS = 15
+_presidio_result_queue: "queue.Queue" = queue.Queue(maxsize=1)
+_presidio_init_started = threading.Event()
+_presidio_engines = None  # (analyzer, anonymizer, image_redactor) once resolved
+
+
+def _init_presidio_engines_worker() -> None:
+    try:
+        eng_analyzer = AnalyzerEngine()
+        eng_anonymizer = AnonymizerEngine()
+        eng_image = ImageRedactorEngine() if ImageRedactorEngine is not None else None
+        _presidio_result_queue.put((eng_analyzer, eng_anonymizer, eng_image))
+    except Exception as e:
+        logger.error("Presidio engine initialization failed: %s", e)
+        _presidio_result_queue.put((None, None, None))
+
+
+def _get_presidio_engines():
+    """Return (analyzer, anonymizer, image_redactor), starting lazy init on
+    first call. Waits up to _PRESIDIO_INIT_TIMEOUT_SECONDS; if init hasn't
+    finished yet, returns (None, None, None) for this call without giving up
+    permanently, so a slow-but-eventually-successful load still gets used on
+    a later call."""
+    global _presidio_engines
+    if _presidio_engines is not None:
+        return _presidio_engines
+
+    if not _presidio_init_started.is_set():
+        _presidio_init_started.set()
+        threading.Thread(target=_init_presidio_engines_worker, daemon=True).start()
+
+    try:
+        _presidio_engines = _presidio_result_queue.get(timeout=_PRESIDIO_INIT_TIMEOUT_SECONDS)
+    except queue.Empty:
+        logger.error(
+            "Presidio engine initialization still not ready after %ss; "
+            "falling back to regex-only redaction for this call.",
+            _PRESIDIO_INIT_TIMEOUT_SECONDS,
+        )
+        return None, None, None
+
+    return _presidio_engines
+
+
+from agents.whisper import stt_model
 
 
 def audio_transcription_agent(state) -> dict:
-    audio_bytes = state.get('audio_bytes', "")
+    audio_b64 = state.get('audio_bytes', "")
     audio_format = state.get('audio_format', "")
-    
+
+    if not audio_b64:
+        return {
+            "raw_audio_transcript": "",
+            "audio_transcription_error": "No audio provided.",
+        }
+
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+    except Exception as e:
+        return {
+            "raw_audio_transcript": "",
+            "audio_transcription_error": f"Could not decode audio: {e}",
+        }
+
     transcript_final, info = stt_model.transcript(
         audio_bytes=audio_bytes,
         audio_format=audio_format
@@ -314,48 +380,110 @@ def check_cache_agent(state) -> dict[str, any]:
     else:
         return {"cached": False}
 
-def redact_text_with_presidio(text: str) -> str:
+# Presidio is only configured with an English NLP model in this project, so its
+# NER-based recognizers (PERSON, LOCATION, ...) only run reliably on English
+# text. These patterns are a conservative, language-agnostic safety net used
+# whenever the real engines are unavailable or fail outright, so a redaction
+# failure never means "send the original text through unredacted."
+_FALLBACK_PII_PATTERNS = [
+    ("EMAIL_ADDRESS", re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")),
+    ("IBAN_CODE", re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")),
+    ("CREDIT_CARD", re.compile(r"\b(?:\d[ -]?){13,19}\b")),
+    ("US_SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("PHONE_NUMBER", re.compile(r"\+?\d[\d\-.\s()]{7,14}\d")),
+]
+
+
+def _fallback_regex_redact(text: str) -> str:
+    redacted = text
+    for label, pattern in _FALLBACK_PII_PATTERNS:
+        redacted = pattern.sub(f"<{label}>", redacted)
+    return redacted
+
+
+def redact_text_with_presidio(text: str, language_code: str = "en") -> tuple[str, str]:
+    """Redact PII from `text`.
+
+    Returns (redacted_text, coverage):
+      - "presidio_en":      full Presidio analysis ran against English-model NER
+                            + pattern recognizers.
+      - "presidio_partial": Presidio ran, but the input's detected language
+                            isn't English, so only its language-agnostic pattern
+                            recognizers (email, credit card, IBAN, ...) are
+                            trustworthy here -- NER-based entities like names or
+                            addresses are not reliably covered.
+      - "fallback_regex":   the Presidio engines were unavailable or raised, so a
+                            conservative regex-only scrubber was used instead.
+
+    On any failure this always returns scrubbed text, never the raw input.
+    """
     if not text:
-        return ""
-    if analyzer is None:
-        return text
+        return "", "presidio_en"
+
+    analyzer_engine, anonymizer_engine, _ = _get_presidio_engines()
+    if analyzer_engine is None or anonymizer_engine is None:
+        return _fallback_regex_redact(text), "fallback_regex"
+
     try:
-        results = analyzer.analyze(text=text, language="en")
-        anon = anonymizer.anonymize(text=text, analyzer_results=results)
-        return anon.text
-    except Exception:
-        return text
-        
+        # Only an English NLP model is configured, so analysis always runs in
+        # "en" regardless of the detected language -- see coverage note above.
+        results = analyzer_engine.analyze(text=text, language="en")
+        anon = anonymizer_engine.anonymize(text=text, analyzer_results=results)
+        coverage = "presidio_en" if language_code == "en" else "presidio_partial"
+        return anon.text, coverage
+    except Exception as e:
+        logger.error("Presidio text redaction failed, using fallback scrubber: %s", e)
+        return _fallback_regex_redact(text), "fallback_regex"
+
+
+_PII_COVERAGE_SEVERITY = {"presidio_en": 0, "presidio_partial": 1, "fallback_regex": 2}
+
+
 def query_pii_agent(state) -> dict:
     query = state.get("query") or ""
-    audio_transcript = state.get("audio_transcript") or ""
+    audio_transcript = state.get("raw_audio_transcript") or ""
+    language_code = state.get("language_code") or "en"
 
-    clean_query = redact_text_with_presidio(query)
-    clean_audio_transcript = redact_text_with_presidio(audio_transcript)
+    clean_query, query_coverage = redact_text_with_presidio(query, language_code)
+    clean_audio_transcript, audio_coverage = redact_text_with_presidio(
+        audio_transcript, language_code
+    )
+
+    worst_coverage = max(
+        [query_coverage, audio_coverage], key=lambda c: _PII_COVERAGE_SEVERITY[c]
+    )
 
     return {
         "clean_query": clean_query,
         "clean_audio_transcript": clean_audio_transcript,
-        "pii_language_used": "en"
+        "pii_language_used": language_code,
+        "pii_coverage": worst_coverage,
     }
-        
+
 def image_pii_agent(state) -> dict:
     image = state.get("image_bytes")
 
     if not image:
         return {"image_bytes_cleaned": None}
 
-    if image_pii is None:
+    _, _, image_redactor = _get_presidio_engines()
+    if image_redactor is None:
+        # Fail closed: never forward an unredacted image to the vision LLM.
         return {
-            "image_bytes_cleaned": image,
-            "image_redaction_mode": "passthrough_no_redactor"
+            "image_bytes_cleaned": None,
+            "image_redaction_mode": "blocked_no_redactor",
         }
 
     try:
         image_data = base64.b64decode(image)
         pil_image = Image.open(io.BytesIO(image_data))
 
-        red_result = image_pii.redact(image=pil_image, fill="black")
+        red_result = image_redactor.redact(image=pil_image, fill="black")
+        if red_result.mode != "RGB":
+            # JPEG can't encode alpha; RGBA/P/etc inputs (e.g. PNG screenshots)
+            # would otherwise raise here and fall into the fail-closed branch.
+            red_result = red_result.convert("RGB")
+
         buffered = io.BytesIO()
         red_result.save(buffered, format="JPEG")
         clean_img_bytes_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -364,10 +492,11 @@ def image_pii_agent(state) -> dict:
             "image_bytes_cleaned": clean_img_bytes_base64,
             "image_redaction_mode": "presidio_redacted"
         }
-    except Exception:
+    except Exception as e:
+        logger.error("Image PII redaction failed, blocking image: %s", e)
         return {
-            "image_bytes_cleaned": image,
-            "image_redaction_mode": "passthrough_after_error"
+            "image_bytes_cleaned": None,
+            "image_redaction_mode": "blocked_after_error",
         }
 
 def rewrite_agent(state) -> dict:
@@ -393,6 +522,14 @@ def rewrite_agent(state) -> dict:
 
 def image_exp_agent(state) -> str:
     img = state.get('image_bytes_cleaned')
+
+    if not img:
+        return {
+            'image_exp': (
+                "Image analysis was skipped because PII redaction could not be "
+                "confirmed for the uploaded image (see image_redaction_mode)."
+            )
+        }
 
     messages = [
         SystemMessage(content=image_system_prompt),
@@ -422,55 +559,34 @@ def merging_agent(state) -> str:
     else:
         return {'merged': query}
 
-def k_getter_use_web(state) -> dict:
+def k_getter_agent(state) -> dict:
     query = state.get("merged") or ""
-    forced_is_web = state.get("is_web", None)
-    has_forced_is_web = forced_is_web is not None
 
     messages = [
-        SystemMessage(content=k_web_system_prompt),
-        HumanMessage(content=k_web_humman(query)) 
+        SystemMessage(content=k_system_prompt),
+        HumanMessage(content=k_human(query))
         # Note: I removed the extra JSON parsing suffix because .with_structured_output() handles it natively
     ]
 
     try:
-        # Use the FallBack Constrained Invoke Manager 
+        # Use the FallBack Constrained Invoke Manager
         # (It will return a dictionary directly based on your Pydantic descion schema)
         results = decision_llm.constrained_invoke(messages, fallback_order=FALLBACK_ORDER)
 
         return {
-            "k": int(results["k"]),
-            "is_web": bool(forced_is_web) if has_forced_is_web else bool(results["is_web"])
+            "k": int(results["k"])
         }
 
     except Exception as e:
         return {
             "k": 8,
-            "is_web": bool(forced_is_web) if has_forced_is_web else False,
             "structured_output_error": str(e)
-        }
-
-def web_scrapper_agent(state) -> dict:
-    query = state.get("merged") or ""
-    k = state.get("k", 8)
-
-    try:
-        tool = TavilySearch(max_results=k)
-        respond = tool.invoke(query)
-        return {
-            "context": respond,
-            "retrieval_mode": "web_search"
-        }
-    except Exception:
-        return {
-            "context": [],
-            "retrieval_mode": "web_search_failed"
         }
 
 def responser_agent(state) -> str:
     query = state.get('merged')
-    context = state.get('context', [])
-    
+    context = combine_evidence(state)
+
     messages = [
         SystemMessage(content=responser_system_prompt),
         HumanMessage(content=responser_humman_prompt(query, context))
@@ -523,7 +639,7 @@ def ranker_agent(state) -> dict:
     query = state.get("eng_query")
     image = state.get("image_exp")
     response = state.get("response")
-    content = state.get("context")
+    content = combine_evidence(state)
 
     messages = [
         SystemMessage(content=ranker_system_prompt),

@@ -5,9 +5,10 @@ from typing import Any, Literal
 from langgraph.graph import START, END, StateGraph
 from langsmith import traceable
 
-from models import State 
-from agents_local import*
-from hyb_retriver_agent import hyb_retriver_agent
+from models import State
+from agents.agents import *
+from agents.Retrieve.agent import hyb_retriver_agent
+from agents.DocIdMapper.agent import doc_id_mapper_agent
 
 
 
@@ -127,8 +128,15 @@ def cache_router(state: State) -> Literal["jump", "continue"]:
     return "jump" if bool(state.get("cached")) else "continue"
 
 
-def web_decision_router(state: State) -> Literal["use_web", "use_ret"]:
-    return "use_web" if bool(state.get("is_web")) else "use_ret"
+def retrieval_necessity_router(state: State) -> Literal["need_retrieval", "skip_retrieval"]:
+    """
+    The hybrid retriever is only needed when the doc-ID mapper couldn't
+    confidently pin the query to enough OSHA sections on its own.
+    """
+    section_ids = state.get("section_ids") or []
+    need_more = bool(state.get("need_more"))
+
+    return "need_retrieval" if (len(section_ids) < 3 or need_more) else "skip_retrieval"
 
 
 def rank_router(state: State) -> Literal["accepted", "rejected"]:
@@ -150,11 +158,11 @@ class Workflow:
         self.image_filter = image_pii_agent
         self.merger = safe_merging_agent
         self.is_cache = check_cache_agent
-        self.k_web_getter = k_getter_use_web
+        self.k_getter = k_getter_agent
+        self.doc_id_mapper = doc_id_mapper_agent
         self.retriever = hyb_retriver_agent
         self.rewriter = rewrite_agent
         self.image = image_exp_agent
-        self.web_searcher = web_scrapper_agent
         self.caching_agent = safe_caching_agent
         self.ranker = ranker_agent
         self.response_trans = response_translator
@@ -180,9 +188,9 @@ class Workflow:
         graph.add_node("image", self.image)
         graph.add_node("merger", self.merger)
         graph.add_node("cache_check", self.is_cache)
-        graph.add_node("k_web_getter", self.k_web_getter)
+        graph.add_node("k_getter", self.k_getter)
+        graph.add_node("doc_id_mapper", self.doc_id_mapper)
         graph.add_node("retriever", self.retriever)
-        graph.add_node("web_searcher", self.web_searcher)
         graph.add_node("responser", self.responser)
         graph.add_node("ranker", self.ranker)
         graph.add_node("caching", self.caching_agent)
@@ -228,18 +236,18 @@ class Workflow:
             cache_router,
             {
                 "jump": "response_trans",
-                "continue": "k_web_getter",
+                "continue": "k_getter",
             },
         )
+        graph.add_edge("k_getter", "doc_id_mapper")
         graph.add_conditional_edges(
-            "k_web_getter",
-            web_decision_router,
+            "doc_id_mapper",
+            retrieval_necessity_router,
             {
-                "use_web": "web_searcher",
-                "use_ret": "retriever",
+                "need_retrieval": "retriever",
+                "skip_retrieval": "responser",
             },
         )
-        graph.add_edge("web_searcher", "responser")
         graph.add_edge("retriever", "responser")
         graph.add_edge("responser", "ranker")
         graph.add_conditional_edges(
@@ -266,4 +274,4 @@ workflow = Workflow
 
 client = workflow()
 
-print(client.run(State(query="Safety requirements for arc welding",is_web=False)))
+print(client.run(State(query="Safety requirements for arc welding")))

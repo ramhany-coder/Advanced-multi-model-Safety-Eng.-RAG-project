@@ -13,6 +13,7 @@ langchain-huggingface
 langchain-community
 langchain-classic
 langsmith
+rank_bm25
 torchvision
 faster-whisper==1.2.1
 chromadb
@@ -20,6 +21,8 @@ sentence-transformers
 
 presidio-analyzer
 presidio-anonymizer
+presidio-image-redactor
+pytesseract
 
 
 langchain-openai
@@ -31,9 +34,6 @@ gptcache
 lingua-language-detector
 openai
 
-
-langchain-tavily
-tavily-python
 
 langchain-pinecone
 pinecone

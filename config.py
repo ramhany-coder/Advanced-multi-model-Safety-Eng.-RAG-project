@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     
     PARENT_PATH: str
-    CHILD_PATH: str
-    CHILD_DOCUMENTS_PATH: str = "osha_extractive_summaries.json"
 
     PINECONE_MODEL : str
     EMBEDDING_MODEL_NAME : str

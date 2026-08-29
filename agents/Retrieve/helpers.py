@@ -8,107 +8,52 @@ try:
     from langchain_classic.retrievers import EnsembleRetriever
 except Exception:
     EnsembleRetriever = None
-from langchain_core.stores import InMemoryStore
-from langchain_core.documents import Document
 from agents.Retrieve.reranker_pachage import pinecone_client
 from agents.Retrieve.prompts import rerank_system_prompt, rerank_human_prompt
 from agents.Retrieve.schemas import RerankSelection
 from agents.fallback import FallBack
 from agents.Retrieve.bm25 import BM25
+from config import settings
 
 
-def load_parent_docstore(
+def load_parent_documents(
     registry_path: str = "parent_store/registry.json",
-    given_section_id: list[str] = None
-):
+    given_section_id: list[str] = None,
+) -> list[Document]:
+    """Load full OSHA section documents (parents) for direct retrieval."""
     with open(registry_path, "r", encoding="utf-8") as f:
         registry = json.load(f)
 
-    parent_docstore = InMemoryStore()
-    items = []
-
     if isinstance(registry, dict):
-
-        for doc_id, item in registry.items():
-
-            section_id = item.get("section_id") or str(doc_id)
-            title = item.get("title") or ""
-            full_text = item.get("full_text") or ""
-
-            if given_section_id is not None and section_id not in given_section_id:
-                continue
-
-            page_content = (
-                f"Title: {title}\n\n"
-                f"Full Text:\n{full_text}"
-            )
-
-            metadata = {
-                "doc_id": str(doc_id),
-                "section_id": section_id,
-                "title": title,
-            }
-
-            document = Document(
-                page_content=page_content,
-                metadata=metadata,
-            )
-
-            items.append(
-                (
-                    str(doc_id),
-                    document,
-                )
-            )
-
+        entries = registry.items()
     elif isinstance(registry, list):
+        entries = enumerate(registry)
+    else:
+        raise TypeError("registry.json must be either dict or list.")
 
-        for i, item in enumerate(registry):
+    documents = []
 
-            section_id = (
-                item.get("section_id")
-                or item.get("doc_id")
-                or item.get("parent_index")
-                or str(i)
-            )
+    for key, item in entries:
+        section_id = item.get("section_id") or str(key)
 
-            if given_section_id is not None and section_id not in given_section_id:
-                continue
+        if given_section_id is not None and section_id not in given_section_id:
+            continue
 
-            title = item.get("title") or ""
-            full_text = item.get("full_text") or ""
+        title = item.get("title") or ""
+        full_text = item.get("full_text") or ""
+        doc_id = str(item.get("doc_id") or key)
 
-            page_content = (
-                f"Title: {title}\n\n"
-                f"Full Text:\n{full_text}"
-            )
-
-            metadata = {
-                "doc_id": str(section_id),
+        document = Document(
+            page_content=f"Title: {title}\n\nFull Text:\n{full_text}",
+            metadata={
+                "doc_id": doc_id,
                 "section_id": section_id,
                 "title": title,
-            }
-
-            document = Document(
-                page_content=page_content,
-                metadata=metadata,
-            )
-
-            items.append(
-                (
-                    str(section_id),
-                    document,
-                )
-            )
-
-    else:
-        raise TypeError(
-            "registry.json must be either dict or list."
+            },
         )
+        documents.append(document)
 
-    parent_docstore.mset(items)
-
-    return parent_docstore
+    return documents
 
 
 # Ensemble fusion weights for combining semantic (dense) + BM25 (sparse) child retrieval.
@@ -145,28 +90,15 @@ def _build_embedder() -> HuggingFaceEmbeddings:
 emb = _build_embedder()
 
 
-def _combined_title_and_text(children: list[Document]) -> list[Document]:
-    """Re-shape child docs so BM25 and semantic search both score title + full text."""
-    return [
-        Document(
-            page_content=f"Title: {child.metadata.get('title', '')}\n\nFull Text:\n{child.page_content}",
-            metadata=child.metadata,
-        )
-        for child in children
-    ]
-
-
-def _ensemble_child_retrieve(children: list[Document], query: str, fetch_k: int) -> list[Document]:
-    """Steps 2+3: BM25 and semantic retrieval over the child docs' title + full text, fused 0.6/0.4."""
-    if not children:
+def _ensemble_retrieve(documents: list[Document], query: str, fetch_k: int) -> list[Document]:
+    """BM25 and semantic retrieval directly over the parent documents, fused 0.6/0.4."""
+    if not documents:
         return []
 
-    combined = _combined_title_and_text(children)
-
-    dense_store = Chroma.from_documents(combined, embedding=emb)
+    dense_store = Chroma.from_documents(documents, embedding=emb)
     dense_retriever = dense_store.as_retriever(search_kwargs={"k": fetch_k})
 
-    sparse_retriever = BM25(combined, k=fetch_k).retriever
+    sparse_retriever = BM25(documents, k=fetch_k).retriever
 
     if EnsembleRetriever is None:
         return dense_retriever.invoke(query)[:fetch_k]
@@ -176,35 +108,6 @@ def _ensemble_child_retrieve(children: list[Document], query: str, fetch_k: int)
         weights=[DENSE_WEIGHT, SPARSE_WEIGHT],
     )
     return ensemble.invoke(query)[:fetch_k]
-
-
-def _children_to_parents(
-    child_docs: list[Document],
-    parent_docstore,
-    max_parents: int,
-) -> list[Document]:
-    """Step 4: map matched child sections back to their full parent OSHA section documents."""
-    parent_docs = []
-    seen_doc_ids = set()
-
-    for child in child_docs:
-        doc_id = child.metadata.get("doc_id")
-        if not doc_id or doc_id in seen_doc_ids:
-            continue
-        seen_doc_ids.add(doc_id)
-
-        parent = parent_docstore.mget([doc_id])[0]
-        if parent is None:
-            continue
-
-        parent = Document(page_content=parent.page_content, metadata=dict(parent.metadata or {}))
-        parent.metadata["matched_child_section_id"] = child.metadata.get("section_id")
-        parent_docs.append(parent)
-
-        if len(parent_docs) >= max_parents:
-            break
-
-    return parent_docs
 
 
 def _llm_rerank(documents: list[Document], query: str, k: int) -> tuple[list[Document], str]:

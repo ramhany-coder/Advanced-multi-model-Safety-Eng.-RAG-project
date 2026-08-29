@@ -175,13 +175,11 @@ flowchart TD
     G --> H[English Cache Check]
 
     H -->|Cache Hit| T[Response Translator]
-    H -->|Cache Miss| R[Dynamic Router]
+    H -->|Cache Miss| R[Retrieval Depth Planner]
 
-    R -->|Local KB| S[Hybrid Retriever: Chroma + BM25]
-    R -->|Web Needed| W[Web Search Agent]
+    R --> S[Hybrid Retriever: Chroma + BM25]
 
     S --> X[Response Synthesis]
-    W --> X
 
     X --> Q[QA Ranker]
 
@@ -220,9 +218,8 @@ The graph routes input based on available state fields:
 | `audio_transcription_agent` | Converts voice input into transcript text. |
 | `merging_agent` | Fuses text, audio transcript, and image analysis into one retrieval payload. |
 | `check_cache_agent` | Checks English-only semantic cache. |
-| `k_getter_use_web` | Chooses retrieval depth and whether web fallback is needed. |
+| `k_getter_agent` | Chooses retrieval depth for local OSHA retrieval. |
 | `hyb_retriver_agent` | Retrieves OSHA context using dense + sparse retrieval. |
-| `web_scrapper_agent` | Retrieves external information when local context is insufficient. |
 | `responser_agent` | Generates OSHA-grounded compliance response. |
 | `ranker_agent` | Evaluates grounding quality and hallucination risk. |
 | `caching_agent` | Stores accepted English query-response pairs only. |
@@ -272,7 +269,6 @@ Create a `.env` file:
 ```bash
 OPENAI_API_KEY=your_openai_api_key
 PINECONE_API_KEY=your_pinecone_api_key
-TAVILY_API_KEY=your_tavily_api_key
 LANGCHAIN_API_KEY=your_langsmith_api_key
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_PROJECT=osha-multimodal-rag

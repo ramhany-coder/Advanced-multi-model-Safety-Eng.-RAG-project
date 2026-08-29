@@ -447,54 +447,20 @@ def merging_human_prompt(query: str, img_exp: str) -> str:
 
 
 # ==========================================
-# 4. K-GETTER & WEB ROUTER PROMPTS
+# 4. K-GETTER PROMPTS
 # ==========================================
 
-k_web_system_prompt = (
-    "You are the routing intelligence for an OSHA safety RAG system.\n"
-    "Your job is to decide whether the final compact query should use local OSHA 1926 retrieval or web search, "
-    "and choose retrieval depth k.\n\n"
+k_system_prompt = (
+    "You are the retrieval-depth planner for an OSHA safety RAG system.\n"
+    "Your job is to choose retrieval depth k for the local OSHA 1926 retrieval.\n\n"
 
     "Local corpus awareness:\n"
     f"{LOCAL_OSHA_1926_CORPUS_SUMMARY}\n\n"
 
     "Return fields:\n"
-    "- is_web: boolean.\n"
     "- k: integer retrieval depth.\n\n"
 
-    "DEFAULT RULE:\n"
-    "If a query mentions OSHA 1926, 29 CFR 1926, construction safety, or a construction hazard covered by Part 1926, "
-    "use LOCAL retrieval: is_web=false.\n\n"
-
-    "Use LOCAL retrieval, is_web=false, for:\n"
-    "- working at heights, work at height, elevated work, fall hazards\n"
-    "- fall protection, guardrails, safety nets, personal fall arrest systems, harnesses, lanyards\n"
-    "- scaffolds, scaffold access, scaffold guardrails, scaffold inspections, supported/suspended scaffolds\n"
-    "- ladders, stairways, walking/working surfaces in construction\n"
-    "- PPE, hard hats, eye/face protection, respiratory protection when construction-related\n"
-    "- excavations, trenches, shoring, sloping, benching, cave-in protection\n"
-    "- cranes, derricks, hoists, rigging, material handling\n"
-    "- confined spaces in construction\n"
-    "- electrical safety in construction\n"
-    "- toxic/hazardous substances in construction\n"
-    "- demolition, steel erection, concrete/masonry, welding/cutting, fire protection, signs/signals/barricades\n\n"
-
-    "Use WEB retrieval, is_web=true, only for:\n"
-    "- General OSHA agency questions: What is OSHA? What does OSHA stand for? OSHA definition.\n"
-    "- Current OSHA news, recent enforcement updates, press releases, current penalties, current agency leadership.\n"
-    "- Manufacturer-specific equipment details, model manuals, product specifications, load charts, brand-specific instructions.\n"
-    "- Non-1926 standards: general industry 1910, maritime, agriculture, MSHA, EPA, DOT, NFPA-only questions.\n"
-    "- State-plan specific current requirements or local legal updates.\n"
-    "- Any question clearly requiring current external facts not contained in OSHA 1926 local regulations.\n\n"
-
-    "Tie-breakers:\n"
-    "- 'What are the OSHA compliance requirements for working at heights?' MUST be local: is_web=false, k=8.\n"
-    "- 'OSHA 1926 fall protection working at heights requirements' MUST be local: is_web=false, k=8.\n"
-    "- Do NOT use web just because the query is broad if it is still about OSHA 1926 construction standards.\n"
-    "- If both local and web seem possible, choose local unless the question asks for current/latest/news/manufacturer/state-plan details.\n\n"
-
     "k selection:\n"
-    "- k=2 for simple general OSHA agency definition questions using web.\n"
     "- k=4 or 5 for narrow local section lookups.\n"
     "- k=8 for broad fall protection / working-at-heights / compliance requirement questions.\n"
     "- k=6 to 10 for multi-hazard image or scenario questions crossing multiple OSHA 1926 subparts.\n"
@@ -504,20 +470,11 @@ k_web_system_prompt = (
 )
 
 
-def k_web_humman(query: str) -> str:
+def k_human(query: str) -> str:
     return (
-        "Evaluate this final retrieval query for routing and retrieval depth.\n\n"
-        f"Query:\n{query}\n\n"
-        "Decide whether this should use local OSHA 1926 retrieval or web search.\n"
-        "Important: working at heights, fall protection, guardrails, PFAS, safety nets, scaffold, ladder, "
-        "excavation, PPE, crane, confined space, and electrical construction topics should normally be local."
+        "Evaluate this final retrieval query and choose retrieval depth.\n\n"
+        f"Query:\n{query}"
     )
-
-
-# Correctly spelled alias for future migration.
-# Keep the misspelled original because agents.py may use it.
-def k_web_human(query: str) -> str:
-    return k_web_humman(query)
 
 
 # ==========================================
