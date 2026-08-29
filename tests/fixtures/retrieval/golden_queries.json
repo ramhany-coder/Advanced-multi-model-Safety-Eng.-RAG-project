@@ -1,0 +1,27 @@
+{
+  "fall_protection_scaffolds": {
+    "query": "What are the fall protection requirements for scaffolds?",
+    "expected_section_ids": ["1926.501", "1926.502", "1926.760"],
+    "top_k": 5
+  },
+  "ppe_hazardous_chemicals": {
+    "query": "What PPE is required for employees exposed to hazardous chemicals?",
+    "expected_section_ids": ["1926.65 App B", "1926.65 App C", "1926.62", "1926.55"],
+    "top_k": 5
+  },
+  "injury_recordkeeping": {
+    "query": "What are the recordkeeping requirements for workplace injuries?",
+    "expected_section_ids": ["1926.22"],
+    "top_k": 5
+  },
+  "fire_extinguishers": {
+    "query": "What are the requirements for portable fire extinguishers on a construction site?",
+    "expected_section_ids": ["1926.150", "1926.151"],
+    "top_k": 5
+  },
+  "crane_operator_training": {
+    "query": "What training must crane operators receive?",
+    "expected_section_ids": ["1926.1427", "1926.1430"],
+    "top_k": 5
+  }
+}

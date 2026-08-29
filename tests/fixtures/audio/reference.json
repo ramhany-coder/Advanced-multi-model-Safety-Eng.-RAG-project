@@ -1,0 +1,12 @@
+{
+  "english_sample.mp3": {
+    "text": "Please wear your safety helmet before entering the work site.",
+    "lang_prefix": "en",
+    "min_similarity": 0.85
+  },
+  "arabic_sample.mp3": {
+    "text": "يجب ارتداء خوذة السلامة قبل دخول موقع العمل.",
+    "lang_prefix": "ar",
+    "min_similarity": 0.7
+  }
+}

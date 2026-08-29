@@ -1,9 +1,9 @@
 from abc import abstractmethod
 from langchain_core.embeddings import Embeddings
-from agents.SingeltonLayer import SingeltonLayer
+from interfaces.singleton import SingeltonLayer
 
 
-class EmbeddingInterface (SingeltonLayer):
+class EmbeddingInterface(metaclass=SingeltonLayer):
 
     @property
     @abstractmethod

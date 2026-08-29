@@ -1,13 +1,32 @@
 import tempfile
-from interfaces.Embedding import EmbeddingInterface
+
+# Shared across the prompt modules of multiple agents (Rewrite, Merger, ...)
+# that describe/enforce the retrieval query length budget.
+MAX_RETRIEVAL_QUERY_CHARS = 400
+
+# Shared corpus-awareness blurb reused by every agent prompt that needs the
+# LLM to know what the local retrieval corpus actually contains (ImageAnalysis,
+# Responser, QueryTranslator).
+LOCAL_OSHA_1926_CORPUS_SUMMARY = (
+    "The local retrieval corpus contains OSHA 29 CFR Part 1926 construction safety "
+    "regulation section documents. It includes about 374 OSHA 1926 sections with "
+    "section_id, title, url, and full_text fields. Covered construction topics include "
+    "general construction safety requirements, scaffolds, fall protection, PPE, ladders, "
+    "stairways, excavations, trenching, cranes, derricks, hoists, aerial lifts, confined "
+    "spaces in construction, electrical safety, toxic and hazardous substances, steel "
+    "erection, demolition, concrete and masonry construction, fire protection, material "
+    "handling, tools, welding and cutting, signs/signals/barricades, motor vehicles, "
+    "mechanized equipment, rollover protection, underground construction, blasting, "
+    "power transmission and distribution, and related OSHA 1926 construction standards."
+)
 
 
-
-def tempfile_creator (audio_bytes,audio_formate):
-    try : 
+def tempfile_creator(audio_bytes, audio_formate):
+    try:
+        suffix = audio_formate if audio_formate.startswith(".") else f".{audio_formate}"
         temp_file = tempfile.NamedTemporaryFile(
                 delete=False,
-                suffix=audio_formate
+                suffix=suffix
             )
         temp_file.write(audio_bytes)
         temp_file.flush()
@@ -17,13 +36,38 @@ def tempfile_creator (audio_bytes,audio_formate):
         raise ValueError(f"Error during creating temp file for audio scripting {e}")
     return temp_file , audio_path
 
-def validate_router(self, router: str) -> str:
-        if router not in self.routers_list:
-            raise ValueError(
-                f"Unsupported router '{router}'. "
-                f"Available routers: {', '.join(self.routers_list)}"
-            )
-        return router
+SUPPORTED_ROUTERS = ["ollama", "gpt", "gemini", "groq"]
+
+
+def validate_router(router: str) -> str:
+    if router not in SUPPORTED_ROUTERS:
+        raise ValueError(
+            f"Unsupported router '{router}'. "
+            f"Available routers: {', '.join(SUPPORTED_ROUTERS)}"
+        )
+    return router
+
+def combine_evidence(state) -> list:
+    """
+    Merge DB-matched sections (state['content'], from the doc-ID mapper) with
+    whatever the hybrid retriever produced (state['context']), deduping by doc_id
+    so the responser/ranker see the same evidence regardless of whether the
+    retriever ran.
+    """
+    content = state.get("content") or []
+    context = state.get("context") or []
+
+    combined = []
+    seen_doc_ids = set()
+    for doc in list(content) + list(context):
+        doc_id = getattr(doc, "metadata", {}).get("doc_id") if hasattr(doc, "metadata") else None
+        if doc_id is not None:
+            if doc_id in seen_doc_ids:
+                continue
+            seen_doc_ids.add(doc_id)
+        combined.append(doc)
+    return combined
+
 
 def clamp_text(text: str, max_chars: int = 2000, suffix: str = "...") -> str:
     """

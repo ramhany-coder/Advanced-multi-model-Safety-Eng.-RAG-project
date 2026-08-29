@@ -2,8 +2,12 @@ protobuf==3.20.3
 
 streamlit
 python-dotenv
+fastapi
+uvicorn[standard]
+requests
 protobuf==3.20.3
 https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
 langgraph
 langchain
 langchain-core
@@ -13,6 +17,7 @@ langchain-huggingface
 langchain-community
 langchain-classic
 langsmith
+rank_bm25
 torchvision
 faster-whisper==1.2.1
 chromadb
@@ -20,6 +25,10 @@ sentence-transformers
 
 presidio-analyzer
 presidio-anonymizer
+presidio-image-redactor
+pytesseract
+sentencepiece
+spacy-huggingface-pipelines
 
 
 langchain-openai
@@ -30,10 +39,3 @@ Pillow
 gptcache
 lingua-language-detector
 openai
-
-
-langchain-tavily
-tavily-python
-
-langchain-pinecone
-pinecone

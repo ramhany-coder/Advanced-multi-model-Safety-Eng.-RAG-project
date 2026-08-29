@@ -5,9 +5,21 @@ from typing import Any, Literal
 from langgraph.graph import START, END, StateGraph
 from langsmith import traceable
 
-from models import State
-from agents import*
+from models import State, has_value_client, entry_router
+from agents.Audio.agent import audio_transcription_agent
+from agents.LanguageDetector.agent import language_detector
+from agents.QueryTranslator.agent import user_query_translator
+from agents.PII.agent import query_pii_agent, image_pii_agent
+from agents.Rewrite.agent import rewrite_agent
+from agents.ImageAnalysis.agent import image_exp_agent
+from agents.Merger.agent import merging_agent
+from agents.Cache.agent import check_cache_agent, caching_agent
+from agents.Responser.agent import responser_agent
+from agents.Ranker.agent import ranker_agent, rejection_response_agent
+from agents.ResponseTranslator.agent import response_translator
 from agents.Retrieve.agent import hyb_retriver_agent
+from agents.DocIdMapper.agent import doc_id_mapper_agent
+from agents.Reranker.agent import reranker_agent
 
 
 
@@ -95,11 +107,16 @@ def safe_merging_agent(state: State) -> dict[str, Any]:
     """
     Merge text/audio and image evidence safely.
 
-    The original merger could receive None for text-only or image-only requests.
-    This wrapper normalizes missing branches to empty strings.
+    Only reached when an image was provided (see merge_necessity_router), so
+    the standalone rewriter is skipped upstream and this node's LLM call does
+    the rewrite itself by combining the raw translated query with the image
+    analysis. Falls back to eng_query when rewritten_query was never
+    populated for that reason.
     """
     normalized_state = dict(state)
-    normalized_state["rewritten_query"] = state.get("rewritten_query") or ""
+    normalized_state["rewritten_query"] = (
+        state.get("rewritten_query") or state.get("eng_query") or ""
+    )
     normalized_state["image_exp"] = state.get("image_exp") or ""
 
     if not normalized_state["rewritten_query"] and not normalized_state["image_exp"]:
@@ -111,6 +128,29 @@ def safe_merging_agent(state: State) -> dict[str, Any]:
         }
 
     return merging_agent(normalized_state) or {}
+
+
+def skip_merge_agent(state: State) -> dict[str, Any]:
+    """
+    No image was provided, so merging is skipped: the rewriter already
+    produced the final query text, use it as-is.
+    """
+    return {"merged": state.get("rewritten_query") or state.get("eng_query") or ""}
+
+
+def rewrite_necessity_router(state: State) -> Literal["rewrite", "skip_rewrite"]:
+    """
+    Skip the standalone rewriter when an image was provided: the merger
+    performs the rewrite itself by combining the raw translated query with
+    the image analysis (see safe_merging_agent).
+    """
+    return "skip_rewrite" if has_value_client(state.get("image_bytes")) else "rewrite"
+
+
+def merge_necessity_router(state: State) -> Literal["merge", "skip_merge"]:
+    """The merger is only needed when an image was provided to combine with
+    the text/audio query; otherwise the rewritten query is used directly."""
+    return "merge" if has_value_client(state.get("image_bytes")) else "skip_merge"
 
 
 def safe_caching_agent(state: State) -> dict[str, Any]:
@@ -127,17 +167,40 @@ def cache_router(state: State) -> Literal["jump", "continue"]:
     return "jump" if bool(state.get("cached")) else "continue"
 
 
-def web_decision_router(state: State) -> Literal["use_web", "use_ret"]:
-    return "use_web" if bool(state.get("is_web")) else "use_ret"
+def retrieval_necessity_router(state: State) -> Literal["need_retrieval", "skip_retrieval"]:
+    """
+    The hybrid retriever is only needed when the doc-ID mapper couldn't
+    confidently pin the query to enough OSHA sections on its own.
+    """
+    section_ids = state.get("section_ids") or []
+    need_more = bool(state.get("need_more"))
+
+    return "need_retrieval" if (len(section_ids) < 3 or need_more) else "skip_retrieval"
 
 
-def rank_router(state: State) -> Literal["accepted", "rejected"]:
+def mark_retry_agent(state: State) -> dict[str, Any]:
+    """Record that the retrieval retry pass has been used, so a second rejection
+    ends the graph instead of looping again."""
+    return {"retried": True}
+
+
+def rank_router(state: State) -> Literal["accepted", "retry", "rejected"]:
     try:
         rank_value = int(state.get("rank") or 0)
     except (TypeError, ValueError):
         rank_value = 0
 
-    return "accepted" if rank_value >= 7 else "rejected"
+    if rank_value >= 7:
+        return "accepted"
+
+    # The doc-id mapper judged its own section pinning sufficient (need_more
+    # False), so the hybrid retriever may not have gotten a fair shot at
+    # improving the answer. Give it exactly one retry pass on the merged query
+    # before giving up.
+    if not state.get("need_more") and not state.get("retried"):
+        return "retry"
+
+    return "rejected"
 
 
 class Workflow:
@@ -150,11 +213,11 @@ class Workflow:
         self.image_filter = image_pii_agent
         self.merger = safe_merging_agent
         self.is_cache = check_cache_agent
-        self.k_web_getter = k_getter_use_web
+        self.doc_id_mapper = doc_id_mapper_agent
         self.retriever = hyb_retriver_agent
+        self.reranker = reranker_agent
         self.rewriter = rewrite_agent
         self.image = image_exp_agent
-        self.web_searcher = web_scrapper_agent
         self.caching_agent = safe_caching_agent
         self.ranker = ranker_agent
         self.response_trans = response_translator
@@ -168,6 +231,7 @@ class Workflow:
         graph.add_node("skip_image", skip_image_agent)
         graph.add_node("text_ready", passthrough_agent)
         graph.add_node("image_ready", passthrough_agent)
+        graph.add_node("join_ready", passthrough_agent)
         graph.add_node("no_input", no_input_agent)
 
         # Main pipeline nodes
@@ -179,15 +243,17 @@ class Workflow:
         graph.add_node("image_filter", self.image_filter)
         graph.add_node("image", self.image)
         graph.add_node("merger", self.merger)
+        graph.add_node("skip_merge", skip_merge_agent)
         graph.add_node("cache_check", self.is_cache)
-        graph.add_node("k_web_getter", self.k_web_getter)
+        graph.add_node("doc_id_mapper", self.doc_id_mapper)
         graph.add_node("retriever", self.retriever)
-        graph.add_node("web_searcher", self.web_searcher)
+        graph.add_node("reranker", self.reranker)
         graph.add_node("responser", self.responser)
         graph.add_node("ranker", self.ranker)
         graph.add_node("caching", self.caching_agent)
         graph.add_node("rejection_response", self.rejection_response)
         graph.add_node("response_trans", self.response_trans)
+        graph.add_node("mark_retry", mark_retry_agent)
 
         graph.add_conditional_edges(
             START,
@@ -209,7 +275,14 @@ class Workflow:
         graph.add_edge("audio_trans", "lang_detect")
         graph.add_edge("lang_detect", "query_filter")
         graph.add_edge("query_filter", "user_trans")
-        graph.add_edge("user_trans", "query_rewriter")
+        graph.add_conditional_edges(
+            "user_trans",
+            rewrite_necessity_router,
+            {
+                "rewrite": "query_rewriter",
+                "skip_rewrite": "text_ready",
+            },
+        )
         graph.add_edge("query_rewriter", "text_ready")
         graph.add_edge("skip_text", "text_ready")
 
@@ -218,38 +291,50 @@ class Workflow:
         graph.add_edge("image", "image_ready")
         graph.add_edge("skip_image", "image_ready")
 
-        # Wait until both selected branches are ready before merging.
-        graph.add_edge(["text_ready", "image_ready"], "merger")
+        # Wait until both selected branches are ready, then only merge when an
+        # image was provided -- otherwise the rewritten query is used as-is.
+        graph.add_edge(["text_ready", "image_ready"], "join_ready")
+        graph.add_conditional_edges(
+            "join_ready",
+            merge_necessity_router,
+            {
+                "merge": "merger",
+                "skip_merge": "skip_merge",
+            },
+        )
 
         # RAG / response path
         graph.add_edge("merger", "cache_check")
+        graph.add_edge("skip_merge", "cache_check")
         graph.add_conditional_edges(
             "cache_check",
             cache_router,
             {
                 "jump": "response_trans",
-                "continue": "k_web_getter",
+                "continue": "doc_id_mapper",
             },
         )
         graph.add_conditional_edges(
-            "k_web_getter",
-            web_decision_router,
+            "doc_id_mapper",
+            retrieval_necessity_router,
             {
-                "use_web": "web_searcher",
-                "use_ret": "retriever",
+                "need_retrieval": "retriever",
+                "skip_retrieval": "reranker",
             },
         )
-        graph.add_edge("web_searcher", "responser")
-        graph.add_edge("retriever", "responser")
+        graph.add_edge("retriever", "reranker")
+        graph.add_edge("reranker", "responser")
         graph.add_edge("responser", "ranker")
         graph.add_conditional_edges(
             "ranker",
             rank_router,
             {
                 "accepted": "caching",
+                "retry": "mark_retry",
                 "rejected": "rejection_response",
             },
         )
+        graph.add_edge("mark_retry", "retriever")
         graph.add_edge("rejection_response", "response_trans")
         graph.add_edge("caching", "response_trans")
         graph.add_edge("response_trans", END)
@@ -264,4 +349,6 @@ class Workflow:
 
 workflow = Workflow
 
-client = workflow()
+if __name__ == "__main__":
+    client = workflow()
+    print(client.run(State(query="Safety requirements for arc welding")))

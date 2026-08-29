@@ -3,7 +3,6 @@ from typing_extensions import TypedDict
 from langgraph.graph.message import Literal, add_messages
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
 load_dotenv()
 
 class State (BaseModel):
@@ -21,33 +20,27 @@ class State (BaseModel):
     image_exp : Optional[str]
     rewritten_query : Optional[str]
     merged : Optional[str]
-    k : Optional[int]
     context : Optional[list]
+    content : Optional[list]
+    need_more : Optional[bool]
+    retried : Optional[bool]
+    doc_id_mapper_error : Optional[str]
     retrieval_mode : Optional[str]
     bm25_error : Optional[str]
+    reranker_error : Optional[str]
     rank : Optional[int]
     response : Optional[str]
     native_response : Optional[str]
-    is_web : Optional[bool]
     rejected: Optional[bool]
     audio_bytes: Optional[str]
     audio_format: Optional[str]
     audio_transcript: Optional[str]
+    raw_audio_transcript: Optional[str]
     audio_transcription_error: Optional[str]
     clean_audio_transcript: Optional[str]
     detected_voice_language : Optional[str]
-class descion (BaseModel):
-    k : int
-    is_web : bool 
-
-class rank (BaseModel):
-    k: int    
-
 class has_value :
-    def __init__(self, value: Optional[str]):
-        pass
-    def __call__(self, value: Optional[str] = None
-                 ) -> bool:
+    def __call__(self, value: Optional[str]) -> bool:
         """Return True only when a state field contains real user input."""
         if value is None:
                 return False
