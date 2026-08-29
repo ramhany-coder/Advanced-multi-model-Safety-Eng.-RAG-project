@@ -24,7 +24,7 @@ This project demonstrates a production-inspired AI architecture for safety-compl
 - **PII redaction** before downstream model processing.
 - **Multilingual handling** for Arabic, English, and other supported languages.
 - **English-normalized retrieval and caching** for consistency.
-- **Hybrid RAG retrieval** using dense vectors, sparse BM25, and reranking.
+- **Hybrid RAG retrieval** using dense vectors and sparse BM25.
 - **QA ranking and rejection fallback** to reduce unsupported compliance answers.
 
 ---
@@ -126,7 +126,6 @@ The retrieval layer combines:
 - **Dense semantic retrieval** using Chroma and HuggingFace embeddings.
 - **Sparse keyword retrieval** using persistent BM25.
 - **Ensemble retrieval** to combine semantic and lexical matches.
-- **Reranking** to select the most relevant OSHA sections.
 
 This helps the system retrieve both semantically similar regulations and exact keyword/legal references.
 
@@ -218,7 +217,6 @@ The graph routes input based on available state fields:
 | `audio_transcription_agent` | Converts voice input into transcript text. |
 | `merging_agent` | Fuses text, audio transcript, and image analysis into one retrieval payload. |
 | `check_cache_agent` | Checks English-only semantic cache. |
-| `k_getter_agent` | Chooses retrieval depth for local OSHA retrieval. |
 | `hyb_retriver_agent` | Retrieves OSHA context using dense + sparse retrieval. |
 | `responser_agent` | Generates OSHA-grounded compliance response. |
 | `ranker_agent` | Evaluates grounding quality and hallucination risk. |
@@ -232,10 +230,28 @@ The graph routes input based on available state fields:
 
 ```text
 .
-├── agents.py                 # LangGraph node functions and agent logic
+├── agents/                   # One folder per LangGraph node, each with its own
+│   │                         # agent.py (+ helpers.py / prompts.py / schemas.py as needed)
+│   ├── Audio/                # audio_transcription_agent
+│   ├── LanguageDetector/     # local_language_detector_agent
+│   ├── PII/                  # query_pii_agent, image_pii_agent
+│   ├── QueryTranslator/      # user_query_translator
+│   ├── Rewrite/              # rewrite_agent
+│   ├── ImageAnalysis/        # image_exp_agent
+│   ├── Merger/                # merging_agent
+│   ├── DocIdMapper/          # doc_id_mapper_agent
+│   ├── Retrieve/             # hyb_retriver_agent
+│   ├── Reranker/             # reranker_agent
+│   ├── Responser/            # responser_agent
+│   ├── Ranker/               # ranker_agent, rejection_response_agent
+│   ├── Cache/                # check_cache_agent, caching_agent
+│   ├── ResponseTranslator/   # response_translator
+│   ├── fallback.py           # FallBack: multi-provider LLM call with fallback order
+│   ├── llm_models.py         # Llm: per-provider chat model construction
+│   ├── helpers.py            # Cross-agent shared helpers/constants
+│   └── whisper.py            # Local/cloud Whisper STT wrapper
 ├── workflow.py               # StateGraph construction and routing
 ├── models.py                 # State schema and structured output models
-├── prompt.py                 # Centralized system and human prompts
 ├── chuncking.py              # OSHA document ingestion and indexing pipeline
 ├── datagraping.ipynb         # Data scraping / preparation notebook
 ├── requirements.txt          # Python dependencies
@@ -378,7 +394,6 @@ The image or query does not provide enough detail to confirm platform height, gu
 | Component | Suggested Metric |
 |---|---|
 | Retrieval | Recall@k, MRR, manual relevance score |
-| Reranking | Top-k relevance improvement |
 | Response grounding | Human compliance review, citation accuracy |
 | QA ranker | Accepted/rejected accuracy |
 | Multilingual layer | Translation fidelity, terminology preservation |

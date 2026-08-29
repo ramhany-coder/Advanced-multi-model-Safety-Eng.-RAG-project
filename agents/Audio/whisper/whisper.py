@@ -1,13 +1,19 @@
 import os
+from types import SimpleNamespace
 from typing import Optional , Any
 from loggers import setup_logger
 from agents.helpers import tempfile_creator
+from config import settings
 
 logging = setup_logger(__name__)
 
-# Small model: loads fast and downloads quickly, at some accuracy cost vs. larger
-# models. Bump to "small"/"base" if accuracy on noisy/accented audio is insufficient.
-DEFAULT_MODEL_SIZE = "tiny"
+# "small" trades some load time/memory for noticeably better accuracy than "tiny",
+# especially on Arabic and noisy/accented audio.
+DEFAULT_MODEL_SIZE = "small"
+
+# Used only as a fallback when the local model fails to load (e.g. no network/disk
+# access to fetch model weights in a restricted cloud environment).
+CLOUD_MODEL = "whisper-1"
 
 
 class Whisper:
@@ -15,6 +21,7 @@ class Whisper:
     model_size_or_path: str = DEFAULT_MODEL_SIZE
     device: str = "cpu"
     compute_type: str = "int8"
+    backend: str = "local"
 
     def __init__(
         self,
@@ -22,7 +29,8 @@ class Whisper:
         device: str = "cpu",
         compute_type: str = "int8",
     ):
-        """Initializes and loads the Faster-Whisper model into memory."""
+        """Loads the local Faster-Whisper model. Falls back to the OpenAI Whisper
+        API if the local model fails to load, instead of crashing the app."""
         self.model_size_or_path = model_size_or_path
         self.device = device
         self.compute_type = compute_type
@@ -36,10 +44,18 @@ class Whisper:
                 device=self.device,
                 compute_type=self.compute_type,
             )
+            self.backend = "local"
             logging.info("Whisper model loaded successfully!")
         except Exception as e:
-            logging.error(f"Failed to load Whisper Model: {e}")
-            raise ValueError(f"Whisper Model could not be loaded: {e}")
+            logging.error(
+                f"Failed to load local Whisper model, falling back to the "
+                f"OpenAI Whisper API ({CLOUD_MODEL}): {e}"
+            )
+            from openai import OpenAI
+
+            self.model = None
+            self.backend = "cloud"
+            self._openai_client = OpenAI(api_key=settings.GPT_API)
 
     def transcript(
         self,
@@ -48,17 +64,23 @@ class Whisper:
         beam_size: int = 5,
         vad_filter: bool = True,
     ) -> tuple[str, Any]:
-        """Transcribes raw audio bytes using the pre-loaded Whisper model."""
-        if self.model is None:
-            raise RuntimeError("Whisper model is not initialized.")
-
+        """Transcribes raw audio bytes using whichever backend loaded successfully."""
         # Create temporary file from audio bytes
         temp_file, audio_path = tempfile_creator(
             audio_bytes=audio_bytes, audio_formate=audio_format
         )
 
         try:
-            # Transcribe
+            if self.backend == "cloud":
+                with open(audio_path, "rb") as audio_file:
+                    response = self._openai_client.audio.transcriptions.create(
+                        model=CLOUD_MODEL,
+                        file=audio_file,
+                        response_format="verbose_json",
+                    )
+                return response.text.strip(), SimpleNamespace(language=response.language)
+
+            # Transcribe locally
             segments, info = self.model.transcribe(
                 audio_path, beam_size=beam_size, vad_filter=vad_filter
             )

@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 from agents.helpers import validate_router
-from agents.llm_models import client_llm
+from agents.llm.llm_models import client_llm
 
 class FallBack:
     def __init__(

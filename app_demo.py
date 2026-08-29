@@ -1,8 +1,10 @@
 import base64
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
 import streamlit as st
 
 # Page config should be the first Streamlit command
@@ -45,6 +47,10 @@ def load_streamlit_secrets():
 
 
 load_streamlit_secrets()
+
+# Base URL of the FastAPI app in api/app.py (run separately with
+# `uvicorn api.app:app --reload`). Used only by the API Agent Tester tab below.
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
 
 # Import workflow AFTER secrets are loaded
 try:
@@ -135,7 +141,6 @@ def build_initial_state(
         # RAG fields
         "rewritten_query": None,
         "merged": None,
-        "k": None,
         "context": None,
         "cached": None,
 
@@ -234,6 +239,84 @@ def render_debug_panel(result: Dict[str, Any]):
 
 
 # -----------------------------
+# API Agent Tester helpers (calls the FastAPI app in api/app.py)
+# -----------------------------
+
+# Mirrors api.endpoints.STAGE_AGENTS -- kept as a static fallback so the tab
+# still works if the API isn't reachable yet when the page loads.
+FALLBACK_STAGE_NAMES = [
+    "audio-transcription",
+    "language-detector",
+    "query-pii",
+    "image-pii",
+    "user-query-translator",
+    "rewrite",
+    "image-analysis",
+    "merger",
+    "cache-check",
+    "cache-write",
+    "doc-id-mapper",
+    "retriever",
+    "reranker",
+    "responser",
+    "ranker",
+    "rejection-response",
+    "response-translator",
+]
+
+# Small example StatePayload per stage, so the JSON editor starts with
+# something runnable instead of an empty object.
+STAGE_EXAMPLES: Dict[str, Dict[str, Any]] = {
+    "audio-transcription": {"audio_bytes": "<base64_audio>", "audio_format": "mp3"},
+    "language-detector": {"query": "هل العامل محتاج حزام أمان وهو واقف على السقالة؟"},
+    "query-pii": {"query": "My name is John Smith, is this scaffold safe?", "language_code": "en"},
+    "image-pii": {"image_bytes": "<base64_image>"},
+    "user-query-translator": {"clean_query": "Does a worker need fall protection?", "language": "English"},
+    "rewrite": {"eng_query": "Does a worker need fall protection on a scaffold?", "chat_hist": []},
+    "image-analysis": {"image_bytes_cleaned": "<base64_cleaned_image>"},
+    "merger": {"rewritten_query": "fall protection scaffold requirements", "image_exp": ""},
+    "cache-check": {"merged": "fall protection scaffold requirements"},
+    "cache-write": {"merged": "fall protection scaffold requirements", "response": "Example grounded answer.", "cached": False},
+    "doc-id-mapper": {"merged": "fall protection scaffold requirements"},
+    "retriever": {"merged": "fall protection scaffold requirements", "k": 5},
+    "reranker": {"merged": "fall protection scaffold requirements", "context": [], "content": []},
+    "responser": {"merged": "fall protection scaffold requirements", "context": [], "content": []},
+    "ranker": {"eng_query": "Does a worker need fall protection?", "response": "Example grounded answer.", "context": [], "content": []},
+    "rejection-response": {"rank": 3},
+    "response-translator": {"response": "Example grounded answer.", "language": "Arabic", "language_code": "ar"},
+}
+
+
+@st.cache_data(ttl=30)
+def fetch_stage_names(base_url: str) -> List[str]:
+    """GET /api/agents from the running FastAPI app; falls back to the static list."""
+    try:
+        resp = requests.get(f"{base_url}/api/agents", timeout=3)
+        resp.raise_for_status()
+        agents = resp.json().get("agents")
+        if agents:
+            return agents
+    except Exception:
+        pass
+    return FALLBACK_STAGE_NAMES
+
+
+def call_agent_api(base_url: str, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """POST payload to {base_url}{path} and return {"ok", "status_code", "data"}."""
+    try:
+        resp = requests.post(f"{base_url}{path}", json=payload, timeout=120)
+    except requests.exceptions.RequestException as e:
+        return {"ok": False, "status_code": None, "data": {"error": str(e)}}
+
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {"error": resp.text}
+
+    return {"ok": resp.ok, "status_code": resp.status_code, "data": data}
+
+
+# -----------------------------
 # Session Initialization
 # -----------------------------
 init_session_state()
@@ -282,119 +365,226 @@ with st.sidebar:
     )
 
 
-# -----------------------------
-# Chat History
-# -----------------------------
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+tab_chat, tab_api = st.tabs(["💬 Chat Demo", "🧪 API Agent Tester"])
 
 
-# -----------------------------
-# Input Area
-# -----------------------------
-query = st.chat_input(
-    "Ask an OSHA safety question in English, Arabic, or upload image/audio from the sidebar..."
-)
+with tab_chat:
+    # -----------------------------
+    # Chat History
+    # -----------------------------
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
 
-run_file_only = False
-if uploaded_image or uploaded_audio:
-    run_file_only = st.button(
-        "Run analysis with uploaded file(s)",
-        type="primary",
-        help="Use this when you uploaded image/audio without typing a chat message.",
+
+    # -----------------------------
+    # Input Area
+    # -----------------------------
+    query = st.chat_input(
+        "Ask an OSHA safety question in English, Arabic, or upload image/audio from the sidebar..."
     )
 
+    run_file_only = False
+    if uploaded_image or uploaded_audio:
+        run_file_only = st.button(
+            "Run analysis with uploaded file(s)",
+            type="primary",
+            help="Use this when you uploaded image/audio without typing a chat message.",
+        )
 
-# -----------------------------
-# Main Execution
-# -----------------------------
-should_run = bool(query) or run_file_only
 
-if should_run:
-    user_display_text = query or "Analyze the uploaded file(s)."
+    # -----------------------------
+    # Main Execution
+    # -----------------------------
+    should_run = bool(query) or run_file_only
 
-    st.session_state.messages.append({"role": "user", "content": user_display_text})
+    if should_run:
+        user_display_text = query or "Analyze the uploaded file(s)."
 
-    with st.chat_message("user"):
-        st.write(user_display_text)
+        st.session_state.messages.append({"role": "user", "content": user_display_text})
+
+        with st.chat_message("user"):
+            st.write(user_display_text)
+            if uploaded_image:
+                st.image(uploaded_image, caption="Uploaded image", use_container_width=True)
+            if uploaded_audio:
+                st.audio(uploaded_audio)
+
+        # Important: read uploaded files once per run after displaying.
+        # Streamlit file object pointer can be consumed, so seek back if possible.
+        image_b64 = None
+        audio_b64 = None
+        audio_format = None
+
         if uploaded_image:
-            st.image(uploaded_image, caption="Uploaded image", use_container_width=True)
+            uploaded_image.seek(0)
+            image_b64 = file_to_base64(uploaded_image)
+
         if uploaded_audio:
-            st.audio(uploaded_audio)
+            uploaded_audio.seek(0)
+            audio_b64 = file_to_base64(uploaded_audio)
+            audio_format = get_file_extension(uploaded_audio, "mp3")
 
-    # Important: read uploaded files once per run after displaying.
-    # Streamlit file object pointer can be consumed, so seek back if possible.
-    image_b64 = None
-    audio_b64 = None
-    audio_format = None
+        chat_history = st.session_state.messages[:-1]
 
-    if uploaded_image:
-        uploaded_image.seek(0)
-        image_b64 = file_to_base64(uploaded_image)
+        initial_state = build_initial_state(
+            query=query,
+            image_b64=image_b64,
+            audio_b64=audio_b64,
+            audio_format=audio_format,
+            chat_history=chat_history,
+        )
 
-    if uploaded_audio:
-        uploaded_audio.seek(0)
-        audio_b64 = file_to_base64(uploaded_audio)
-        audio_format = get_file_extension(uploaded_audio, "mp3")
+        with st.chat_message("assistant"):
+            with st.spinner("Running multimodal RAG pipeline..."):
+                try:
+                    result = workflow.run(initial_state)
+                    st.session_state.last_result = result
 
-    chat_history = st.session_state.messages[:-1]
+                    response = get_user_facing_response(result)
+                    rejected = is_rejected_result(result)
 
-    initial_state = build_initial_state(
-        query=query,
-        image_b64=image_b64,
-        audio_b64=audio_b64,
-        audio_format=audio_format,
-        chat_history=chat_history,
-    )
+                    if rejected:
+                        st.warning(
+                            "The QA ranker rejected the generated answer as insufficiently reliable. "
+                            "Showing a safe fallback response instead."
+                        )
+                    else:
+                        st.success("Answer generated and validated.")
 
-    with st.chat_message("assistant"):
-        with st.spinner("Running multimodal RAG pipeline..."):
-            try:
-                result = workflow.run(initial_state)
-                st.session_state.last_result = result
+                    st.write(response)
 
-                response = get_user_facing_response(result)
-                rejected = is_rejected_result(result)
+                    render_result_metadata(result)
 
-                if rejected:
-                    st.warning(
-                        "The QA ranker rejected the generated answer as insufficiently reliable. "
-                        "Showing a safe fallback response instead."
+                    if show_debug:
+                        render_debug_panel(result)
+
+                except Exception as e:
+                    response = (
+                        "The demo encountered a runtime error while processing the request. "
+                        "Please check the workflow, API keys, vector store, and uploaded file format."
                     )
-                else:
-                    st.success("Answer generated and validated.")
+                    st.error(response)
+                    with st.expander("Error details"):
+                        st.exception(e)
 
-                st.write(response)
+                    result = {"response": response, "native_response": response}
 
-                render_result_metadata(result)
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": get_user_facing_response(st.session_state.last_result or result),
+            }
+        )
 
-                if show_debug:
-                    render_debug_panel(result)
 
-            except Exception as e:
-                response = (
-                    "The demo encountered a runtime error while processing the request. "
-                    "Please check the workflow, API keys, vector store, and uploaded file format."
-                )
-                st.error(response)
-                with st.expander("Error details"):
-                    st.exception(e)
-
-                result = {"response": response, "native_response": response}
-
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": get_user_facing_response(st.session_state.last_result or result),
-        }
+    # -----------------------------
+    # Footer
+    # -----------------------------
+    st.divider()
+    st.caption(
+        "Portfolio demo: multilingual multimodal RAG with PII filtering, English-normalized retrieval/cache, QA ranking, and rejection-safe output."
     )
 
 
-# -----------------------------
-# Footer
-# -----------------------------
-st.divider()
-st.caption(
-    "Portfolio demo: multilingual multimodal RAG with PII filtering, English-normalized retrieval/cache, QA ranking, and rejection-safe output."
-)
+with tab_api:
+    st.caption(
+        f"Calls the FastAPI app in `api/app.py` over HTTP at `{API_BASE_URL}` "
+        "(start it with `uvicorn api.app:app --reload`). Each agent can be exercised "
+        "in isolation here, independently of the in-process chat demo on the other tab."
+    )
+
+    try:
+        health = requests.get(f"{API_BASE_URL}/health", timeout=2)
+        api_reachable = health.ok
+    except Exception:
+        api_reachable = False
+
+    if not api_reachable:
+        st.warning(
+            f"Could not reach the API at {API_BASE_URL}. Start it with "
+            "`uvicorn api.app:app --reload` from the project root, then reload this page."
+        )
+
+    st.subheader("Run a single agent")
+
+    stage_names = fetch_stage_names(API_BASE_URL)
+    selected_stage = st.selectbox("Agent stage", stage_names, key="stage_select")
+
+    default_payload = STAGE_EXAMPLES.get(selected_stage, {})
+    payload_text = st.text_area(
+        "Request body (StatePayload JSON -- only the fields this agent reads matter)",
+        value=json.dumps(default_payload, indent=2, ensure_ascii=False),
+        height=200,
+        key=f"payload_{selected_stage}",
+    )
+
+    if st.button("Run agent", type="primary", key="run_stage_btn"):
+        try:
+            payload = json.loads(payload_text) if payload_text.strip() else {}
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON: {e}")
+        else:
+            with st.spinner(f"Calling POST /api/agents/{selected_stage} ..."):
+                outcome = call_agent_api(API_BASE_URL, f"/api/agents/{selected_stage}", payload)
+
+            if outcome["ok"]:
+                st.success(f"Stage '{selected_stage}' completed.")
+            else:
+                st.error(f"Stage '{selected_stage}' failed (HTTP {outcome['status_code']}).")
+            st.json(outcome["data"])
+
+    st.divider()
+    st.subheader("Run the full pipeline")
+
+    api_query = st.text_input("Query", key="api_query")
+    col1, col2 = st.columns(2)
+    with col1:
+        api_image = st.file_uploader(
+            "Image (optional)", type=["png", "jpg", "jpeg", "webp"], key="api_image"
+        )
+    with col2:
+        api_audio = st.file_uploader(
+            "Audio (optional)", type=["mp3", "wav", "m4a", "ogg", "webm"], key="api_audio"
+        )
+    api_chat_hist_text = st.text_area("chat_hist (JSON list)", value="[]", key="api_chat_hist")
+
+    if st.button("Run full pipeline", type="primary", key="run_pipeline_btn"):
+        try:
+            chat_hist = json.loads(api_chat_hist_text) if api_chat_hist_text.strip() else []
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON in chat_hist: {e}")
+        else:
+            image_b64 = None
+            audio_b64 = None
+            audio_format = None
+
+            if api_image:
+                api_image.seek(0)
+                image_b64 = file_to_base64(api_image)
+            if api_audio:
+                api_audio.seek(0)
+                audio_b64 = file_to_base64(api_audio)
+                audio_format = get_file_extension(api_audio, "mp3")
+
+            pipeline_payload = {
+                "query": api_query or None,
+                "image_bytes": image_b64,
+                "audio_bytes": audio_b64,
+                "audio_format": audio_format,
+                "chat_hist": chat_hist,
+            }
+
+            with st.spinner("Calling POST /api/pipeline/run ..."):
+                outcome = call_agent_api(API_BASE_URL, "/api/pipeline/run", pipeline_payload)
+
+            if outcome["ok"]:
+                st.success("Pipeline completed.")
+                st.write(get_user_facing_response(outcome["data"]))
+                timings = outcome["data"].get("stage_timings")
+                if timings:
+                    st.markdown("#### Stage timings (seconds)")
+                    st.json(timings)
+            else:
+                st.error(f"Pipeline failed (HTTP {outcome['status_code']}).")
+            st.json(outcome["data"])

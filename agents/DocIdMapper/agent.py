@@ -1,7 +1,7 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import settings
-from agents.fallback import FallBack
+from agents.llm.fallback import FallBack
 from agents.Retrieve.helpers import load_parent_documents
 from agents.DocIdMapper.helpers import known_section_ids, sample_section_id_examples
 from agents.DocIdMapper.prompts import doc_id_mapping_human_prompt, doc_id_mapping_system_prompt

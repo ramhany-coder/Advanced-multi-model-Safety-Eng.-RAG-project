@@ -1,5 +1,25 @@
 import tempfile
 
+# Shared across the prompt modules of multiple agents (Rewrite, Merger, ...)
+# that describe/enforce the retrieval query length budget.
+MAX_RETRIEVAL_QUERY_CHARS = 400
+
+# Shared corpus-awareness blurb reused by every agent prompt that needs the
+# LLM to know what the local retrieval corpus actually contains (ImageAnalysis,
+# Responser, QueryTranslator).
+LOCAL_OSHA_1926_CORPUS_SUMMARY = (
+    "The local retrieval corpus contains OSHA 29 CFR Part 1926 construction safety "
+    "regulation section documents. It includes about 374 OSHA 1926 sections with "
+    "section_id, title, url, and full_text fields. Covered construction topics include "
+    "general construction safety requirements, scaffolds, fall protection, PPE, ladders, "
+    "stairways, excavations, trenching, cranes, derricks, hoists, aerial lifts, confined "
+    "spaces in construction, electrical safety, toxic and hazardous substances, steel "
+    "erection, demolition, concrete and masonry construction, fire protection, material "
+    "handling, tools, welding and cutting, signs/signals/barricades, motor vehicles, "
+    "mechanized equipment, rollover protection, underground construction, blasting, "
+    "power transmission and distribution, and related OSHA 1926 construction standards."
+)
+
 
 def tempfile_creator(audio_bytes, audio_formate):
     try:

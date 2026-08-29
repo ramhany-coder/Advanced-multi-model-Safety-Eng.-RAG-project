@@ -12,9 +12,9 @@ class Settings(BaseSettings):
     
     PARENT_PATH: str
 
-    PINECONE_MODEL : str
     EMBEDDING_MODEL_NAME : str
     EMBEDDING_MODEL_PATH : str
+    EMBEDDINGS_CACHE_DIR: str = "cache/osha_chroma"
     # 2. Use SettingsConfigDict instead of ConfigDict for Pydantic Settings
     model_config = SettingsConfigDict(
         env_file=".env",

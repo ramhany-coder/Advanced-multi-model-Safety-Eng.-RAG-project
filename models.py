@@ -20,13 +20,14 @@ class State (BaseModel):
     image_exp : Optional[str]
     rewritten_query : Optional[str]
     merged : Optional[str]
-    k : Optional[int]
     context : Optional[list]
     content : Optional[list]
     need_more : Optional[bool]
+    retried : Optional[bool]
     doc_id_mapper_error : Optional[str]
     retrieval_mode : Optional[str]
     bm25_error : Optional[str]
+    reranker_error : Optional[str]
     rank : Optional[int]
     response : Optional[str]
     native_response : Optional[str]
@@ -38,12 +39,6 @@ class State (BaseModel):
     audio_transcription_error: Optional[str]
     clean_audio_transcript: Optional[str]
     detected_voice_language : Optional[str]
-class descion (BaseModel):
-    k : int
-
-class rank (BaseModel):
-    k: int    
-
 class has_value :
     def __call__(self, value: Optional[str]) -> bool:
         """Return True only when a state field contains real user input."""
