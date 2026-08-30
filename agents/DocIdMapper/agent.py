@@ -41,7 +41,11 @@ def doc_id_mapper_agent(state) -> dict:
 
     try:
         result = doc_id_mapper_llm.constrained_invoke(
-            messages, FALLBACK_ORDER, constraine_model=DocIdMapping
+            messages,
+            FALLBACK_ORDER,
+            constraine_model=DocIdMapping,
+            method="json_schema",
+            groq_reasoning_effort="low",
         )
         candidate_ids = result.get("section_ids") or []
         need_more = bool(result.get("need_more"))

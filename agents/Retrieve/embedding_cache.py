@@ -76,7 +76,12 @@ emb = _build_embedder()
 
 def _registry_fingerprint(registry_path: str) -> str:
     with open(registry_path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        data = f.read()
+    # Normalize line endings before hashing: git's core.autocrlf checks this
+    # file out with CRLF on Windows but LF on the Linux deploy target, so a
+    # raw byte hash disagrees between the machine that built the cache and
+    # the machine that runs it even though the content is identical.
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _cache_meta_path(cache_dir: str) -> str:

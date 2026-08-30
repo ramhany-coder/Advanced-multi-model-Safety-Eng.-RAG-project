@@ -38,7 +38,7 @@ class _FakeChatModel:
             raise RuntimeError(self._fail_message)
         return SimpleNamespace(content=self._content)
 
-    def with_structured_output(self, schema):
+    def with_structured_output(self, schema, **kwargs):
         return _FakeStructuredModel(self._structured_result, self._structured_fail_message)
 
 
@@ -56,7 +56,7 @@ class _FakeStructuredModel:
 def _patch_get_model(monkeypatch, models_by_router: dict):
     """Route client_llm.get_model(router, model_name) -> models_by_router[router]."""
 
-    def fake_get_model(router, model_name):
+    def fake_get_model(router, model_name, **kwargs):
         try:
             return models_by_router[router]
         except KeyError:
@@ -217,3 +217,122 @@ def test_constrained_invoke_raises_runtime_error_when_all_routers_fail(monkeypat
 
     with pytest.raises(RuntimeError, match="constrained output"):
         fb.constrained_invoke("question", fallback_order=["gpt", "groq"], constraine_model=DummySchema)
+
+
+class _ToolUseFailedError(Exception):
+    """Mimics groq.BadRequestError: a tool_use_failed error whose body still
+    carries the model's valid JSON answer under error.failed_generation."""
+
+    def __init__(self, failed_generation: str):
+        super().__init__("Tool choice is required, but model did not call a tool")
+        self.body = {
+            "error": {
+                "message": "Tool choice is required, but model did not call a tool",
+                "type": "invalid_request_error",
+                "code": "tool_use_failed",
+                "failed_generation": failed_generation,
+            }
+        }
+
+
+def test_constrained_invoke_recovers_valid_json_from_tool_use_failed_error(monkeypatch):
+    fake_groq = _FakeChatModel()
+    fake_groq.with_structured_output = lambda schema: _RaisingStructuredModel(
+        _ToolUseFailedError('{"answer": "42"}')
+    )
+    _patch_get_model(monkeypatch, {"groq": fake_groq})
+    fb = FallBack(llm_groq="mixtral")
+
+    result = fb.constrained_invoke("question", fallback_order=["groq"], constraine_model=DummySchema)
+
+    assert result == {"answer": "42"}
+
+
+def test_constrained_invoke_falls_back_when_failed_generation_is_invalid(monkeypatch):
+    fake_groq = _FakeChatModel()
+    fake_groq.with_structured_output = lambda schema: _RaisingStructuredModel(
+        _ToolUseFailedError('{"not_a_real_field": true}')
+    )
+    _patch_get_model(monkeypatch, {
+        "groq": fake_groq,
+        "gpt": _FakeChatModel(structured_result=DummySchema(answer="gpt saved it")),
+    })
+    fb = FallBack(llm_groq="mixtral", llm_gpt="gpt-4o-mini")
+
+    result = fb.constrained_invoke("question", fallback_order=["groq", "gpt"], constraine_model=DummySchema)
+
+    assert result == {"answer": "gpt saved it"}
+
+
+class _RaisingStructuredModel:
+    def __init__(self, error: Exception):
+        self._error = error
+
+    def invoke(self, message):
+        raise self._error
+
+
+def test_constrained_invoke_forwards_method_to_with_structured_output(monkeypatch):
+    captured_kwargs = {}
+
+    class _RecordingChatModel:
+        def with_structured_output(self, schema, **kwargs):
+            captured_kwargs.update(kwargs)
+            return _FakeStructuredModel(DummySchema(answer="42"), None)
+
+    _patch_get_model(monkeypatch, {"groq": _RecordingChatModel()})
+    fb = FallBack(llm_groq="mixtral")
+
+    fb.constrained_invoke("question", fallback_order=["groq"], constraine_model=DummySchema, method="json_schema")
+
+    assert captured_kwargs == {"method": "json_schema"}
+
+
+def test_constrained_invoke_omits_method_by_default(monkeypatch):
+    captured_kwargs = {}
+
+    class _RecordingChatModel:
+        def with_structured_output(self, schema, **kwargs):
+            captured_kwargs.update(kwargs)
+            return _FakeStructuredModel(DummySchema(answer="42"), None)
+
+    _patch_get_model(monkeypatch, {"groq": _RecordingChatModel()})
+    fb = FallBack(llm_groq="mixtral")
+
+    fb.constrained_invoke("question", fallback_order=["groq"], constraine_model=DummySchema)
+
+    assert captured_kwargs == {}
+
+
+def test_constrained_invoke_forwards_reasoning_effort_to_groq_get_model(monkeypatch):
+    captured = {}
+
+    def fake_get_model(router, model_name, **kwargs):
+        captured[router] = kwargs
+        return _FakeChatModel(structured_result=DummySchema(answer="42"))
+
+    monkeypatch.setattr(fallback_module.client_llm, "get_model", fake_get_model)
+    fb = FallBack(llm_groq="mixtral")
+
+    fb.constrained_invoke(
+        "question", fallback_order=["groq"], constraine_model=DummySchema, groq_reasoning_effort="low"
+    )
+
+    assert captured == {"groq": {"reasoning_effort": "low"}}
+
+
+def test_constrained_invoke_does_not_forward_reasoning_effort_to_other_routers(monkeypatch):
+    captured = {}
+
+    def fake_get_model(router, model_name, **kwargs):
+        captured[router] = kwargs
+        return _FakeChatModel(structured_result=DummySchema(answer="42"))
+
+    monkeypatch.setattr(fallback_module.client_llm, "get_model", fake_get_model)
+    fb = FallBack(llm_gpt="gpt-4o-mini")
+
+    fb.constrained_invoke(
+        "question", fallback_order=["gpt"], constraine_model=DummySchema, groq_reasoning_effort="low"
+    )
+
+    assert captured == {"gpt": {}}

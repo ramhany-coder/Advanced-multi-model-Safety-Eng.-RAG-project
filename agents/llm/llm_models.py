@@ -11,7 +11,7 @@ class Llm :
     def __init__(self,temp:float=0):
         self.temp = temp
 
-    def get_model(self, router: str, model: str):
+    def get_model(self, router: str, model: str, **kwargs):
         router = validate_router(router)
 
         providers = {
@@ -21,7 +21,7 @@ class Llm :
             "gpt": Llm.gpt,
         }
 
-        return providers[router](model,self.temp)
+        return providers[router](model, self.temp, **kwargs)
         
 # 1. Google Gemini
     @staticmethod
@@ -35,11 +35,23 @@ class Llm :
 
     # 2. Groq
     @staticmethod
-    def groq(model: str, temp: float):
+    def groq(model: str, temp: float, reasoning_effort: str | None = None):
+        kwargs = {}
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         return ChatGroq(
         model=model,
         api_key=settings.GROQ_API,
         temperature=temp,
+        # gpt-oss models spend part of this budget on a hidden reasoning
+        # channel before writing the final answer; left unset, Groq's
+        # server-side default is too small and the response gets cut off
+        # mid-reasoning, leaving nothing valid to parse or tool-call with.
+        # Kept well under this account's ~8000 TPM cap (shared across every
+        # agent in the pipeline) so one call doesn't starve the others.
+        max_tokens=4096,
+        **kwargs,
         )
 
 

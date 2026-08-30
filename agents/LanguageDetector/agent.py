@@ -2,6 +2,7 @@ from lingua import Language, LanguageDetectorBuilder
 
 language_detector = LanguageDetectorBuilder.from_languages(
     Language.ARABIC,
+    Language.ENGLISH,
     Language.FRENCH,
 ).build()
 
