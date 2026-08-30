@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          xargs sudo apt-get install -y < packages.txt
+
+      - name: Cache local models (embedding / Whisper / PII)
+        uses: actions/cache@v4
+        with:
+          path: |
+            models
+            ~/.cache/huggingface
+          key: models-${{ runner.os }}-${{ hashFiles('.env.example') }}
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure environment
+        run: cp .env.example .env
+
+      - name: Run tests
+        run: pytest -v

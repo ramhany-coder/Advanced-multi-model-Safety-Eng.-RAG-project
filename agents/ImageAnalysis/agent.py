@@ -4,7 +4,7 @@ from agents.llm.fallback import FallBack
 from agents.ImageAnalysis.prompts import image_system_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "llama-3.1-8b-instant"
+PRIMARY_MODEL = "qwen/qwen3.8-27b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

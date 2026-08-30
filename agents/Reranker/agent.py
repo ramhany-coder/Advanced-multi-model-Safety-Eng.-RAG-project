@@ -7,7 +7,7 @@ from agents.Reranker.prompts import reranker_human_prompt, reranker_system_promp
 from agents.Reranker.schemas import RerankSelection
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "llama-3.1-8b-instant"
+PRIMARY_MODEL = "openai/gpt-oss-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

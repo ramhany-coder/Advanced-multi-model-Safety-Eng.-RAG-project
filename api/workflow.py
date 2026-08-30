@@ -52,6 +52,9 @@ class PipelineStageError(Exception):
         self.stage_timings = stage_timings
         self.state = state
         self.original = original
+        # Filled in by run_pipeline's except block below once the total
+        # wall-clock time for the aborted run is known.
+        self.total_latency_seconds: Optional[float] = None
         super().__init__(f"stage '{stage}' failed after {elapsed:.2f}s: {original}")
 
 
@@ -143,6 +146,7 @@ def run_pipeline(initial_state: Dict[str, Any]) -> Dict[str, Any]:
         final_state = graph.invoke(initial_state)
     except PipelineStageError as e:
         total_elapsed = time.perf_counter() - start
+        e.total_latency_seconds = round(total_elapsed, 3)
         logger.error(
             "[pipeline] aborted after %.2fs total - failed stage: '%s'",
             total_elapsed,

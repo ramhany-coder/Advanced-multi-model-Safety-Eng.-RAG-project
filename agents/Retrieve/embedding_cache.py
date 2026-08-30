@@ -11,6 +11,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from config import settings
+from model_manager import ensure_model_downloaded, SENTENCE_TRANSFORMER_IGNORE_PATTERNS
 
 DOC_COLLECTION_NAME = "osha_parent_docs"
 
@@ -56,13 +57,16 @@ def load_parent_documents(
 
 
 def _build_embedder() -> HuggingFaceEmbeddings:
-    model_path = settings.EMBEDDING_MODEL_PATH
-    model_name = model_path if model_path and os.path.exists(model_path) else (
-        settings.EMBEDDING_MODEL_NAME or "sentence-transformers/all-MiniLM-L6-v2"
+    # Shares the same local directory as Embedding_Model: downloads once, then
+    # every later call (including across app restarts) loads it from disk.
+    model_path = ensure_model_downloaded(
+        settings.EMBEDDING_MODEL_NAME,
+        settings.EMBEDDING_MODEL_PATH,
+        ignore_patterns=SENTENCE_TRANSFORMER_IGNORE_PATTERNS,
     )
     return HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs={"device": "cpu"},
+        model_name=model_path,
+        model_kwargs={"device": "cpu", "local_files_only": True},
         encode_kwargs={"normalize_embeddings": True},
     )
 
@@ -102,7 +106,10 @@ def build_embedding_cache(registry_path: str | None = None) -> None:
     cache_dir = settings.EMBEDDINGS_CACHE_DIR
     registry_path = registry_path or settings.PARENT_PATH or "parent_store/registry.json"
     fingerprint = _registry_fingerprint(registry_path)
-    model_name = getattr(emb, "model_name", None)
+    # Identity for the cache fingerprint, not the on-disk path: emb.model_name
+    # is now a local directory (see _build_embedder), which would make every
+    # cache built before that local-dir change look spuriously stale.
+    model_name = settings.EMBEDDING_MODEL_NAME
 
     store = Chroma(
         collection_name=DOC_COLLECTION_NAME,
@@ -139,7 +146,10 @@ def load_dense_store() -> Chroma:
 
     registry_path = settings.PARENT_PATH or "parent_store/registry.json"
     fingerprint = _registry_fingerprint(registry_path)
-    model_name = getattr(emb, "model_name", None)
+    # Identity for the cache fingerprint, not the on-disk path: emb.model_name
+    # is now a local directory (see _build_embedder), which would make every
+    # cache built before that local-dir change look spuriously stale.
+    model_name = settings.EMBEDDING_MODEL_NAME
     if meta.get("registry_fingerprint") != fingerprint or meta.get("model_name") != model_name:
         raise RuntimeError(
             f"OSHA embedding cache at '{cache_dir}' is stale (registry.json or the "

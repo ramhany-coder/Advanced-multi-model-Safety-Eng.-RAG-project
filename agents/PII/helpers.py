@@ -15,7 +15,9 @@ try:
 except Exception:
     ImageRedactorEngine = None
 
+from config import settings
 from loggers import setup_logger
+from model_manager import ensure_model_downloaded
 
 logger = setup_logger(__name__)
 
@@ -88,12 +90,19 @@ def _init_multilingual_engine_worker() -> None:
     try:
         if TransformersNlpEngine is None:
             raise RuntimeError("spacy-huggingface-pipelines is not installed")
+
+        # Downloads to settings.PII_TRANSFORMER_MODEL_PATH only the first
+        # time; a later restart finds the weights already on disk and loads
+        # fully offline.
+        local_transformer_path = ensure_model_downloaded(
+            _MULTILINGUAL_TRANSFORMER_MODEL, settings.PII_TRANSFORMER_MODEL_PATH
+        )
         models = [
             {
                 "lang_code": lang,
                 "model_name": {
                     "spacy": _MULTILINGUAL_TOKENIZER_MODEL,
-                    "transformers": _MULTILINGUAL_TRANSFORMER_MODEL,
+                    "transformers": local_transformer_path,
                 },
             }
             for lang in _MULTILINGUAL_LANGUAGES
@@ -133,6 +142,15 @@ def _get_multilingual_engine():
         return None
 
     return _multilingual_engine
+
+
+def warm_up_pii_engines() -> None:
+    """Force both Presidio engines (English + multilingual transformer) to
+    initialize now instead of lazily on the first request. Meant to be called
+    once during app startup so any first-time model download happens there,
+    not on a live user request."""
+    _get_presidio_engines()
+    _get_multilingual_engine()
 
 
 # Presidio is only configured with an English NLP model in this project, so its

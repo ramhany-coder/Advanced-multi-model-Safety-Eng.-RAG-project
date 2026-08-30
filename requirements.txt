@@ -1,41 +1,56 @@
-protobuf==3.20.3
-
+# --- Core app ---
 streamlit
 python-dotenv
 fastapi
 uvicorn[standard]
 requests
+pydantic
+pydantic-settings
 protobuf==3.20.3
-https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
-https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
+
+# --- LangChain / LangGraph ---
 langgraph
 langchain
 langchain-core
-langchain-openai
-langchain-chroma
-langchain-huggingface
 langchain-community
 langchain-classic
 langsmith
-rank_bm25
-torchvision
-faster-whisper==1.2.1
+langchain-openai
+langchain-google-genai
+langchain-groq
+langchain-ollama
+langchain-chroma
+langchain-huggingface
+
+# --- Retrieval / embeddings / vector store ---
 chromadb
 sentence-transformers
+rank_bm25
+huggingface_hub
 
+# --- spaCy models (used by Presidio's default NLP engine) ---
+https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
+spacy-huggingface-pipelines
+
+# --- PII detection / redaction ---
 presidio-analyzer
 presidio-anonymizer
 presidio-image-redactor
 pytesseract
 sentencepiece
-spacy-huggingface-pipelines
-
-
-langchain-openai
-openai
-
-
-Pillow
-gptcache
 lingua-language-detector
+
+# --- Audio (Whisper) ---
+faster-whisper==1.2.1
+torchvision
+
+# --- LLM clients / caching ---
 openai
+gptcache
+
+# --- Misc ---
+Pillow
+
+# --- Testing ---
+pytest

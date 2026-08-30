@@ -6,39 +6,47 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class State (BaseModel):
-    query: Optional[str]
-    cached : Optional[bool]
-    origin_en : Optional[bool]
-    language : Optional[str]
-    section_ids : Optional[list[str]]
-    language_code: Optional[str]
-    clean_query : Optional[str]
-    chat_hist : Annotated[list,add_messages]
-    eng_query : Optional[str]
-    image_bytes : Optional[str]
-    image_bytes_cleaned : Optional[str]
-    image_exp : Optional[str]
-    rewritten_query : Optional[str]
-    merged : Optional[str]
-    context : Optional[list]
-    content : Optional[list]
-    need_more : Optional[bool]
-    retried : Optional[bool]
-    doc_id_mapper_error : Optional[str]
-    retrieval_mode : Optional[str]
-    bm25_error : Optional[str]
-    reranker_error : Optional[str]
-    rank : Optional[int]
-    response : Optional[str]
-    native_response : Optional[str]
-    rejected: Optional[bool]
-    audio_bytes: Optional[str]
-    audio_format: Optional[str]
-    audio_transcript: Optional[str]
-    raw_audio_transcript: Optional[str]
-    audio_transcription_error: Optional[str]
-    clean_audio_transcript: Optional[str]
-    detected_voice_language : Optional[str]
+    query: Optional[str] = None
+    cached : Optional[bool] = None
+    origin_en : Optional[bool] = None
+    language : Optional[str] = None
+    section_ids : Optional[list[str]] = None
+    language_code: Optional[str] = None
+    clean_query : Optional[str] = None
+    chat_hist : Annotated[list,add_messages] = []
+    eng_query : Optional[str] = None
+    image_bytes : Optional[str] = None
+    image_bytes_cleaned : Optional[str] = None
+    image_exp : Optional[str] = None
+    rewritten_query : Optional[str] = None
+    merged : Optional[str] = None
+    context : Optional[list] = None
+    content : Optional[list] = None
+    need_more : Optional[bool] = None
+    retried : Optional[bool] = None
+    doc_id_mapper_error : Optional[str] = None
+    retrieval_mode : Optional[str] = None
+    bm25_error : Optional[str] = None
+    reranker_error : Optional[str] = None
+    rank : Optional[int] = None
+    cache_verdict : Optional[str] = None
+    response : Optional[str] = None
+    native_response : Optional[str] = None
+    rejected: Optional[bool] = None
+    audio_bytes: Optional[str] = None
+    audio_format: Optional[str] = None
+    audio_transcript: Optional[str] = None
+    raw_audio_transcript: Optional[str] = None
+    audio_transcription_error: Optional[str] = None
+    clean_audio_transcript: Optional[str] = None
+    detected_voice_language : Optional[str] = None
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
 class has_value :
     def __call__(self, value: Optional[str]) -> bool:
         """Return True only when a state field contains real user input."""
@@ -83,9 +91,9 @@ class entry_router:
         request always activates exactly one text-side branch and one image-side
         branch.
         """
-        has_query = has_value()(state.get("query"))
-        has_audio = has_value()(state.get("audio_bytes"))
-        has_image = has_value()(state.get("image_bytes"))
+        has_query = has_value()(state.query)
+        has_audio = has_value()(state.audio_bytes)
+        has_image = has_value()(state.image_bytes)
 
         if not (has_query or has_audio or has_image):
             return ["no_input"]

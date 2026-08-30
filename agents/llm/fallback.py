@@ -27,23 +27,28 @@ class FallBack:
     def invoke(self, message: Any, fallback_order: List[str]) -> str:
         """
         Entry point 1: Regular text generation.
-        Attempts to invoke models in the provided sequence. 
+        Attempts to invoke models in the provided sequence.
         Falls back to the next router if one fails.
+
+        `message` may be a callable(router) -> messages instead of a fixed
+        value, letting a caller shrink the payload for a specific router
+        (e.g. a tight-TPM one) while other routers still get the full prompt.
         """
         errors = []
-        
+
         for router in fallback_order:
             try:
                 print(f"Attempting regular generation using: {router}...")
                 router = validate_router(router)
-                
+
                 if router not in self.llms:
                     raise ValueError(f"No model string configured for '{router}' during initialization.")
-                
+
                 model_name = self.llms[router]
                 llm = client_llm.get_model(router, model_name)
-                
-                response = llm.invoke(message)
+
+                resolved_message = message(router) if callable(message) else message
+                response = llm.invoke(resolved_message)
                 return response.content
                 
             except Exception as e:

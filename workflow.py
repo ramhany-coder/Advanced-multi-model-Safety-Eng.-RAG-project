@@ -5,6 +5,7 @@ from typing import Any, Literal
 from langgraph.graph import START, END, StateGraph
 from langsmith import traceable
 
+from config import settings
 from models import State, has_value, entry_router
 from agents.Audio.agent import audio_transcription_agent
 from agents.LanguageDetector.agent import language_detector
@@ -13,7 +14,7 @@ from agents.PII.agent import query_pii_agent, image_pii_agent
 from agents.Rewrite.agent import rewrite_agent
 from agents.ImageAnalysis.agent import image_exp_agent
 from agents.Merger.agent import merging_agent
-from agents.Cache.agent import check_cache_agent, caching_agent
+from agents.Cache.agent import check_cache_agent, caching_agent, cache_reasoner_agent
 from agents.Responser.agent import responser_agent
 from agents.Ranker.agent import ranker_agent, rejection_response_agent
 from agents.ResponseTranslator.agent import response_translator
@@ -163,8 +164,17 @@ def safe_caching_agent(state: State) -> dict[str, Any]:
     return caching_agent(state) or {}
 
 
-def cache_router(state: State) -> Literal["jump", "continue"]:
-    return "jump" if bool(state.get("cached")) else "continue"
+def cache_router(state: State) -> Literal["jump", "reason", "continue"]:
+    if not bool(state.get("cached")):
+        return "continue"
+
+    # The LLM cache-alignment check is optional: when disabled, a cache hit
+    # is trusted as before and returned straight away.
+    return "reason" if settings.ENABLE_CACHE_REASONING else "jump"
+
+
+def cache_reasoning_router(state: State) -> Literal["use_cache", "recompute"]:
+    return "recompute" if state.get("cache_verdict") == "recompute" else "use_cache"
 
 
 def retrieval_necessity_router(state: State) -> Literal["need_retrieval", "skip_retrieval"]:
@@ -213,6 +223,7 @@ class Workflow:
         self.image_filter = image_pii_agent
         self.merger = safe_merging_agent
         self.is_cache = check_cache_agent
+        self.cache_reasoner = cache_reasoner_agent
         self.doc_id_mapper = doc_id_mapper_agent
         self.retriever = hyb_retriver_agent
         self.reranker = reranker_agent
@@ -245,6 +256,7 @@ class Workflow:
         graph.add_node("merger", self.merger)
         graph.add_node("skip_merge", skip_merge_agent)
         graph.add_node("cache_check", self.is_cache)
+        graph.add_node("cache_reasoner", self.cache_reasoner)
         graph.add_node("doc_id_mapper", self.doc_id_mapper)
         graph.add_node("retriever", self.retriever)
         graph.add_node("reranker", self.reranker)
@@ -257,7 +269,7 @@ class Workflow:
 
         graph.add_conditional_edges(
             START,
-            entry_router,
+            entry_router(),
             {
                 "lang_detect": "lang_detect",
                 "audio_trans": "audio_trans",
@@ -311,7 +323,16 @@ class Workflow:
             cache_router,
             {
                 "jump": "response_trans",
+                "reason": "cache_reasoner",
                 "continue": "doc_id_mapper",
+            },
+        )
+        graph.add_conditional_edges(
+            "cache_reasoner",
+            cache_reasoning_router,
+            {
+                "use_cache": "ranker",
+                "recompute": "doc_id_mapper",
             },
         )
         graph.add_conditional_edges(
@@ -349,6 +370,3 @@ class Workflow:
 
 workflow = Workflow
 
-if __name__ == "__main__":
-    client = workflow()
-    print(client.run(State(query="Safety requirements for arc welding")))

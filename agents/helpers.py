@@ -69,6 +69,37 @@ def combine_evidence(state) -> list:
     return combined
 
 
+def format_context_for_prompt(
+    context: list,
+    max_docs: int | None = None,
+    max_chars_per_doc: int | None = None,
+) -> str:
+    """
+    Render retrieved evidence as compact "Section <id> - <title>" text blocks.
+
+    Dumping the raw Document list (str(context)) wastes tokens on repeated
+    class/metadata boilerplate and unclamped page_content for every item.
+    max_docs/max_chars_per_doc let a caller (e.g. a tight-TPM router like
+    Groq) shrink the payload without affecting callers that don't pass them.
+    """
+    docs = context[:max_docs] if max_docs else context
+    if not docs:
+        return "No retrieved context."
+
+    blocks = []
+    for doc in docs:
+        metadata = getattr(doc, "metadata", {}) or {}
+        section_id = metadata.get("section_id", "unknown")
+        title = metadata.get("title", "")
+        text = getattr(doc, "page_content", None)
+        if text is None:
+            text = str(doc)
+        if max_chars_per_doc:
+            text = clamp_text(text, max_chars_per_doc)
+        blocks.append(f"Section {section_id} - {title}\n{text}")
+    return "\n\n".join(blocks)
+
+
 def clamp_text(text: str, max_chars: int = 2000, suffix: str = "...") -> str:
     """
     Clamps a string to a maximum number of characters.

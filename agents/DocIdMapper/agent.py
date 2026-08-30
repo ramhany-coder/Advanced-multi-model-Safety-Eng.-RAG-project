@@ -8,7 +8,7 @@ from agents.DocIdMapper.prompts import doc_id_mapping_human_prompt, doc_id_mappi
 from agents.DocIdMapper.schemas import DocIdMapping
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "llama-3.1-8b-instant"
+PRIMARY_MODEL = "openai/gpt-oss-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

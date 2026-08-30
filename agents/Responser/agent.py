@@ -1,16 +1,23 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.llm.fallback import FallBack
-from agents.helpers import combine_evidence
+from agents.helpers import combine_evidence, format_context_for_prompt
 from agents.Responser.prompts import responser_humman_prompt, responser_system_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "llama-3.1-8b-instant"
+PRIMARY_MODEL = "openai/gpt-oss-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"
 
 FALLBACK_ORDER = [PRIMARY_ROUTER, SECONDARY_ROUTER]
+
+# Groq's free on_demand tier caps this org at 8000 tokens/minute, so a full,
+# unclamped context block can get the request rejected outright before it
+# even runs. Only the groq attempt gets capped -- gpt has more headroom and
+# should still see everything.
+GROQ_CONTEXT_MAX_DOCS = 4
+GROQ_CONTEXT_MAX_CHARS_PER_DOC = 900
 
 responser_llm = FallBack(
     **{
@@ -24,11 +31,20 @@ def responser_agent(state) -> dict:
     query = state.get('merged')
     context = combine_evidence(state)
 
-    messages = [
-        SystemMessage(content=responser_system_prompt),
-        HumanMessage(content=responser_humman_prompt(query, context))
-    ]
+    def build_messages(router: str):
+        if router == "groq":
+            context_text = format_context_for_prompt(
+                context,
+                max_docs=GROQ_CONTEXT_MAX_DOCS,
+                max_chars_per_doc=GROQ_CONTEXT_MAX_CHARS_PER_DOC,
+            )
+        else:
+            context_text = format_context_for_prompt(context)
+        return [
+            SystemMessage(content=responser_system_prompt),
+            HumanMessage(content=responser_humman_prompt(query, context_text))
+        ]
 
-    response = responser_llm.invoke(messages, fallback_order=FALLBACK_ORDER)
+    response = responser_llm.invoke(build_messages, fallback_order=FALLBACK_ORDER)
 
     return {'response': response}

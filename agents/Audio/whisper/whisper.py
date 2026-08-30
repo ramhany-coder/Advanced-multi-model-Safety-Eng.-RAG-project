@@ -4,6 +4,7 @@ from typing import Optional , Any
 from loggers import setup_logger
 from agents.helpers import tempfile_creator
 from config import settings
+from model_manager import ensure_whisper_model
 
 logging = setup_logger(__name__)
 
@@ -38,9 +39,16 @@ class Whisper:
         try:
             from faster_whisper import WhisperModel
 
+            # Downloads to settings.WHISPER_MODEL_PATH only the first time; a
+            # later restart finds the weights already on disk and loads
+            # fully offline, without touching the network.
+            local_model_path = ensure_whisper_model(
+                self.model_size_or_path, settings.WHISPER_MODEL_PATH
+            )
+
             logging.info(f"Loading Whisper model: {self.model_size_or_path}...")
             self.model = WhisperModel(
-                self.model_size_or_path,
+                local_model_path,
                 device=self.device,
                 compute_type=self.compute_type,
             )
@@ -101,6 +109,6 @@ class Whisper:
                 pass
 
 
-stt_model = Whisper(model_size_or_path=DEFAULT_MODEL_SIZE,
+stt_model = Whisper(model_size_or_path=settings.WHISPER_MODEL_SIZE or DEFAULT_MODEL_SIZE,
                         device="cpu",
                         compute_type="int8")

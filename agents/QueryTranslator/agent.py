@@ -4,7 +4,7 @@ from agents.llm.fallback import FallBack
 from agents.QueryTranslator.prompts import query_translator_human_prompt, query_translator_system_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "llama-3.1-8b-instant"
+PRIMARY_MODEL = "openai/gpt-oss-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

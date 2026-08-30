@@ -1,12 +1,32 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+# Importing api.endpoints pulls in every agent module, which is what actually
+# constructs the embedding and Whisper models today (module-level singletons)
+# -- so by the time `lifespan` below runs, those two have already gone
+# through their own "is it in the local model dir yet?" check on import. The
+# PII engines are lazy, though, so `warm_up_pii_engines` is what makes their
+# check-and-download-if-missing step happen at startup instead of on the
+# first live request.
 from api.endpoints import router
+from agents.PII.helpers import warm_up_pii_engines
 
-app = FastAPI(title="OSHA Multimodal RAG Pipeline API")
+logger = logging.getLogger("api.app")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Startup: verifying local PII models (downloads only if missing)...")
+    warm_up_pii_engines()
+    logger.info("Model check complete.")
+    yield
+
+
+app = FastAPI(title="OSHA Multimodal RAG Pipeline API", lifespan=lifespan)
 
 app.include_router(router, prefix="/api")
 

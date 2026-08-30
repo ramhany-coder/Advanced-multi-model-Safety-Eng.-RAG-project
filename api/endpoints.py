@@ -117,6 +117,7 @@ def run_full_pipeline(payload: PipelineRequest):
                 "failed_stage": e.stage,
                 "stage_latency_seconds": round(e.elapsed, 3),
                 "completed_stage_timings": e.stage_timings,
+                "total_latency_seconds": e.total_latency_seconds,
                 "state": e.state,
                 "error": str(e.original),
             },
