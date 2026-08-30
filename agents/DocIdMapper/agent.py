@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from config import settings
 from agents.llm.fallback import FallBack
 from agents.Retrieve.helpers import load_parent_documents
-from agents.DocIdMapper.helpers import known_section_ids, sample_section_id_examples
+from agents.DocIdMapper.helpers import base_section_id, known_section_ids, sample_section_id_examples
 from agents.DocIdMapper.prompts import doc_id_mapping_human_prompt, doc_id_mapping_system_prompt
 from agents.DocIdMapper.schemas import DocIdMapping
 
@@ -28,8 +28,11 @@ def doc_id_mapper_agent(state) -> dict:
     Map the merged retrieval query straight to known OSHA section_ids using the
     LLM's own OSHA knowledge, then fetch those sections directly from the DB.
 
-    Downstream, the workflow only falls back to the full hybrid retriever when
-    this agent finds fewer than 3 valid section_ids or flags need_more=True.
+    Runs unconditionally, in parallel with the hybrid retriever (see
+    workflow.py) -- their outputs (state['content'] and state['context']) are
+    concatenated and deduped by the reranker before the responser sees them.
+    need_more no longer gates whether retrieval runs; it only gates whether a
+    low-confidence answer gets one retry pass (see rank_router).
     """
     query = state.get("merged") or ""
     registry_path = settings.PARENT_PATH or "parent_store/registry.json"
@@ -58,7 +61,11 @@ def doc_id_mapper_agent(state) -> dict:
         }
 
     valid_ids = known_section_ids(registry_path)
-    section_ids = [sid for sid in dict.fromkeys(candidate_ids) if sid in valid_ids]
+    section_ids = []
+    for raw_id in candidate_ids:
+        sid = base_section_id(raw_id)
+        if sid in valid_ids and sid not in section_ids:
+            section_ids.append(sid)
 
     matched_docs = (
         load_parent_documents(registry_path, given_section_id=section_ids)

@@ -7,7 +7,6 @@ from agents.Retrieve.helpers import load_parent_documents, _ensemble_retrieve
 def hyb_retriver_agent(state) -> dict:
     query = clamp_text(state.get("merged") or "")
     k = int(state.get("k") or 5)
-    section_ids = state.get("section_ids") or []
 
     # "context" may already hold evidence carried over from a previous pass
     # (e.g. the doc-ID mapper's "content" folded in by the reranker before a
@@ -16,10 +15,11 @@ def hyb_retriver_agent(state) -> dict:
 
     fetch_k = max(10, k * 3)
 
-    # Step 1: load the full OSHA section documents (parents), optionally filtered by section_id.
+    # This agent runs unconditionally, side by side with the doc-ID mapper
+    # (never after it), so state['section_ids'] is never populated yet here --
+    # search the full OSHA corpus rather than a mapper-scoped subset.
     parent_docs = load_parent_documents(
         registry_path=settings.PARENT_PATH or "parent_store/registry.json",
-        given_section_id=section_ids or None,
     )
 
     try:

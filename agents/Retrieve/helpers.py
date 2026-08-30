@@ -21,7 +21,7 @@ def _ensemble_retrieve(documents: list[Document], query: str, fetch_k: int) -> l
     if not documents:
         return []
 
-    section_ids = [d.metadata["section_id"] for d in documents]
+    section_ids = list({d.metadata["section_id"] for d in documents})
     dense_retriever = dense_store.as_retriever(
         search_kwargs={"k": fetch_k, "filter": {"section_id": {"$in": section_ids}}}
     )

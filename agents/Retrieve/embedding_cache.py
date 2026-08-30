@@ -7,20 +7,26 @@ the cache at import time and is meant to fail fast if it's missing.
 import hashlib
 import json
 import os
+import shutil
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from config import settings
 from model_manager import ensure_model_downloaded, SENTENCE_TRANSFORMER_IGNORE_PATTERNS
 
-DOC_COLLECTION_NAME = "osha_parent_docs"
+DOC_COLLECTION_NAME = "osha_chunks"
 
 
 def load_parent_documents(
     registry_path: str = "parent_store/registry.json",
     given_section_id: list[str] = None,
 ) -> list[Document]:
-    """Load full OSHA section documents (parents) for direct retrieval."""
+    """Load OSHA retrieval units for direct retrieval.
+
+    One entry in registry_path becomes one Document. With the current
+    chunks_1926.json source that's one paragraph-level chunk (several per
+    section_id); the whole-section "full_text" schema is still accepted so
+    an older registry.json-style file keeps working."""
     with open(registry_path, "r", encoding="utf-8") as f:
         registry = json.load(f)
 
@@ -40,15 +46,18 @@ def load_parent_documents(
             continue
 
         title = item.get("title") or ""
-        full_text = item.get("full_text") or ""
+        text = item.get("body") or item.get("text") or item.get("full_text") or ""
         doc_id = str(item.get("doc_id") or key)
+        chunk_id = str(item.get("chunk_id") or key)
 
         document = Document(
-            page_content=f"Title: {title}\n\nFull Text:\n{full_text}",
+            page_content=f"Title: {title}\n\nText:\n{text}",
             metadata={
                 "doc_id": doc_id,
+                "chunk_id": chunk_id,
                 "section_id": section_id,
                 "title": title,
+                "citation": item.get("citation") or "",
             },
         )
         documents.append(document)
@@ -116,12 +125,21 @@ def build_embedding_cache(registry_path: str | None = None) -> None:
     # cache built before that local-dir change look spuriously stale.
     model_name = settings.EMBEDDING_MODEL_NAME
 
-    store = Chroma(
-        collection_name=DOC_COLLECTION_NAME,
-        embedding_function=emb,
-        persist_directory=cache_dir,
-    )
-    store.delete_collection()
+    # Wipe the whole cache directory before opening any Chroma client against
+    # it. delete_collection() alone leaves the old collection's HNSW segment
+    # folder orphaned on disk (and, on Windows, its .bin files can stay
+    # locked for the rest of the process once a Chroma client has opened
+    # them) -- so the old vectors must be gone from disk before a new client
+    # ever touches this path. Best-effort: a leftover segment folder still
+    # locked by some other process is skipped rather than aborting the
+    # rebuild -- the fresh chroma.sqlite3 built below won't reference it, so
+    # it's inert dead weight, not stale data that could be served.
+    if os.path.isdir(cache_dir):
+        def _warn_locked(_func, path, exc_info):
+            print(f"[warn] could not remove '{path}' (still locked): {exc_info}")
+
+        shutil.rmtree(cache_dir, onexc=_warn_locked)
+
     store = Chroma(
         collection_name=DOC_COLLECTION_NAME,
         embedding_function=emb,

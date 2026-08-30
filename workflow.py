@@ -164,28 +164,21 @@ def safe_caching_agent(state: State) -> dict[str, Any]:
     return caching_agent(state) or {}
 
 
-def cache_router(state: State) -> Literal["jump", "reason", "continue"]:
+def cache_router(state: State) -> list[Literal["jump", "reason", "doc_id_mapper", "retriever"]]:
     if not bool(state.get("cached")):
-        return "continue"
+        # doc_id_mapper and the hybrid retriever are both mandatory and run
+        # side by side; see the join at "reranker" below.
+        return ["doc_id_mapper", "retriever"]
 
     # The LLM cache-alignment check is optional: when disabled, a cache hit
     # is trusted as before and returned straight away.
-    return "reason" if settings.ENABLE_CACHE_REASONING else "jump"
+    return ["reason"] if settings.ENABLE_CACHE_REASONING else ["jump"]
 
 
-def cache_reasoning_router(state: State) -> Literal["use_cache", "recompute"]:
-    return "recompute" if state.get("cache_verdict") == "recompute" else "use_cache"
-
-
-def retrieval_necessity_router(state: State) -> Literal["need_retrieval", "skip_retrieval"]:
-    """
-    The hybrid retriever is only needed when the doc-ID mapper couldn't
-    confidently pin the query to enough OSHA sections on its own.
-    """
-    section_ids = state.get("section_ids") or []
-    need_more = bool(state.get("need_more"))
-
-    return "need_retrieval" if (len(section_ids) < 3 or need_more) else "skip_retrieval"
+def cache_reasoning_router(state: State) -> list[Literal["use_cache", "doc_id_mapper", "retriever"]]:
+    if state.get("cache_verdict") == "recompute":
+        return ["doc_id_mapper", "retriever"]
+    return ["use_cache"]
 
 
 def mark_retry_agent(state: State) -> dict[str, Any]:
@@ -203,10 +196,8 @@ def rank_router(state: State) -> Literal["accepted", "retry", "rejected"]:
     if rank_value >= 7:
         return "accepted"
 
-    # The doc-id mapper judged its own section pinning sufficient (need_more
-    # False), so the hybrid retriever may not have gotten a fair shot at
-    # improving the answer. Give it exactly one retry pass on the merged query
-    # before giving up.
+    # Give the pipeline exactly one retry pass -- a fresh doc-ID mapping plus
+    # a fresh hybrid retrieval -- before giving up on a low-confidence answer.
     if not state.get("need_more") and not state.get("retried"):
         return "retry"
 
@@ -324,7 +315,8 @@ class Workflow:
             {
                 "jump": "response_trans",
                 "reason": "cache_reasoner",
-                "continue": "doc_id_mapper",
+                "doc_id_mapper": "doc_id_mapper",
+                "retriever": "retriever",
             },
         )
         graph.add_conditional_edges(
@@ -332,18 +324,15 @@ class Workflow:
             cache_reasoning_router,
             {
                 "use_cache": "ranker",
-                "recompute": "doc_id_mapper",
+                "doc_id_mapper": "doc_id_mapper",
+                "retriever": "retriever",
             },
         )
-        graph.add_conditional_edges(
-            "doc_id_mapper",
-            retrieval_necessity_router,
-            {
-                "need_retrieval": "retriever",
-                "skip_retrieval": "reranker",
-            },
-        )
-        graph.add_edge("retriever", "reranker")
+        # doc_id_mapper and retriever always both run, side by side; reranker
+        # is a join that fires once both have completed and concatenates
+        # their evidence (state['content'] + state['context']) via
+        # combine_evidence() before the responser sees it.
+        graph.add_edge(["doc_id_mapper", "retriever"], "reranker")
         graph.add_edge("reranker", "responser")
         graph.add_edge("responser", "ranker")
         graph.add_conditional_edges(
@@ -355,6 +344,9 @@ class Workflow:
                 "rejected": "rejection_response",
             },
         )
+        # Re-run both branches so the join at "reranker" (a barrier that
+        # resets after firing) is satisfied again on retry.
+        graph.add_edge("mark_retry", "doc_id_mapper")
         graph.add_edge("mark_retry", "retriever")
         graph.add_edge("rejection_response", "response_trans")
         graph.add_edge("caching", "response_trans")

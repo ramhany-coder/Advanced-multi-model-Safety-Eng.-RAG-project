@@ -89,6 +89,16 @@ ITALIC_TAGS = {"I", "E"}
 
 DESIGNATOR_RUN = re.compile(r"^\s*((?:\([0-9A-Za-z]{1,5}\)\s*){1,6})")
 DESIGNATOR_GROUP = re.compile(r"\(([0-9A-Za-z]{1,5})\)")
+# "General requirements. (1) All vehicles shall have ..." - a short topic
+# phrase, then the first child's designator, all inside the parent's <P>.
+# Matched on text rather than on <I> markup, because GPO italicises the topic
+# phrase only some of the time.
+# eCFR writes it with an em-dash at least as often as a period:
+#     (a) General requirements—(1) The employer shall ensure ...
+# v4 required a period, so every em-dash section kept losing its letter root.
+MERGED_CHILD = re.compile(
+    r"^(?P<lead>[^.()—–]{1,80})\s*[.—–]\s*"
+    r"(?P<des>(?:\([0-9A-Za-z]{1,5}\)\s*){1,3})")
 
 SCOPE_TITLES = {
     "scope", "purpose and scope", "purpose", "scope and application",
@@ -115,43 +125,53 @@ ADMINISTRATIVE_TITLES = {
 
 ROMANS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
           "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx"]
-FIRST_TOKENS = {"a", "1", "i", "A", "I"}
+ROMAN_SET = set(ROMANS)
+
+# CFR nests paragraphs by cycling numbering systems:
+#   (a) -> (1) -> (i) -> (A) -> (1) -> (i) -> (A)
+EXPECTED_BY_DEPTH = ["lower_alpha", "digit", "lower_roman", "upper_alpha",
+                     "digit", "lower_roman", "upper_alpha", "digit"]
+SYSTEM_FIRST = {"lower_alpha": "a", "digit": "1", "lower_roman": "i",
+                "upper_alpha": "A", "upper_roman": "I"}
+FIRST_TOKEN_VALUES = set(SYSTEM_FIRST.values())
+
+
+def systems_for(tok: str) -> list[str]:
+    """Which numbering systems could this token belong to, best guess first."""
+    if tok.isdigit():
+        return ["digit"]
+    if not tok.isalpha():
+        return []
+    if tok.islower():
+        return (["lower_roman", "lower_alpha"] if tok in ROMAN_SET
+                else ["lower_alpha"])
+    return (["upper_roman", "upper_alpha"] if tok.lower() in ROMAN_SET
+            else ["upper_alpha"])
 
 
 def _letter_next(tok: str) -> str | None:
     if len(tok) == 1 and tok.isalpha():
-        if tok.lower() == "z":
-            return tok * 2
-        return chr(ord(tok) + 1)
+        return tok * 2 if tok.lower() == "z" else chr(ord(tok) + 1)
     if len(tok) > 1 and len(set(tok)) == 1 and tok[0].isalpha():
-        if tok[0].lower() == "z":
-            return None
-        return chr(ord(tok[0]) + 1) * len(tok)
+        return None if tok[0].lower() == "z" else chr(ord(tok[0]) + 1) * len(tok)
     return None
 
 
 def _roman_next(tok: str) -> str | None:
     low = tok.lower()
-    if low in ROMANS:
-        idx = ROMANS.index(low)
-        if idx + 1 < len(ROMANS):
-            nxt = ROMANS[idx + 1]
-            return nxt.upper() if tok.isupper() else nxt
+    if low in ROMAN_SET:
+        i = ROMANS.index(low)
+        if i + 1 < len(ROMANS):
+            return ROMANS[i + 1].upper() if tok.isupper() else ROMANS[i + 1]
     return None
 
 
-def _is_successor(prev: str, tok: str) -> bool:
-    """Would `tok` naturally follow `prev` in the same numbering system?"""
-    if prev.isdigit() and tok.isdigit():
-        return int(tok) == int(prev) + 1
-    if prev.isalpha() and tok.isalpha():
-        if prev.isupper() != tok.isupper():
-            return False
-        if _letter_next(prev) == tok:
-            return True
-        if _roman_next(prev) == tok:
-            return True
-    return False
+def is_successor(system: str, prev: str, tok: str) -> bool:
+    if system == "digit":
+        return prev.isdigit() and tok.isdigit() and int(tok) == int(prev) + 1
+    if system in ("lower_roman", "upper_roman"):
+        return _roman_next(prev) == tok
+    return _letter_next(prev) == tok
 
 
 class DesignatorStack:
@@ -163,32 +183,74 @@ class DesignatorStack:
         (2)   -> ['a', '2']       1926.3(a)(2)
         (b)   -> ['b']            1926.3(b)
 
-    Sibling succession is tested before treating a token as a new child, which
-    is what disambiguates (i) as "the letter after (h)" from (i) as "roman one
-    under (1)".
+    Levels are keyed to the NUMBERING SYSTEM, not to succession alone. v2
+    matched only successors, so a list that restarted - a second (a), or a
+    fresh (1) under a new parent - looked like neither a sibling nor a known
+    child and got pushed one level deeper every time. Across part 1926 that
+    ran the stack to depth 22, which is impossible in the CFR.
+
+    Order of resolution for a token:
+      1. successor of an entry already on the stack, same system  -> sibling
+      2. first element of a system already on the stack           -> restart
+      3. first element of a system not yet on the stack           -> child
+      4. otherwise                                                -> replace deepest
     """
 
     def __init__(self) -> None:
-        self.stack: list[str] = []
+        self.entries: list[tuple[str, str]] = []  # (token, system)
+
+    @property
+    def stack(self) -> list[str]:
+        return [t for t, _ in self.entries]
 
     def reset(self, tokens: list[str]) -> list[str]:
         """The paragraph carried an explicit full path - trust it."""
-        self.stack = list(tokens)
-        return list(self.stack)
+        self.entries = []
+        for depth, tok in enumerate(tokens):
+            cands = systems_for(tok) or ["digit"]
+            want = EXPECTED_BY_DEPTH[depth] if depth < len(EXPECTED_BY_DEPTH) else None
+            system = want if want in cands else cands[0]
+            self.entries.append((tok, system))
+        return self.stack
 
     def push(self, tok: str) -> list[str]:
-        for i in range(len(self.stack) - 1, -1, -1):
-            if _is_successor(self.stack[i], tok):
-                self.stack = self.stack[:i] + [tok]
-                return list(self.stack)
-        if tok in FIRST_TOKENS:
-            self.stack.append(tok)
-            return list(self.stack)
-        if self.stack:
-            self.stack = self.stack[:-1] + [tok]
+        cands = systems_for(tok)
+        if not cands:
+            return self.stack
+
+        for i in range(len(self.entries) - 1, -1, -1):
+            prev_tok, prev_sys = self.entries[i]
+            if prev_sys in cands and is_successor(prev_sys, prev_tok, tok):
+                self.entries = self.entries[:i] + [(tok, prev_sys)]
+                return self.stack
+
+        for i in range(len(self.entries) - 1, -1, -1):
+            _prev_tok, prev_sys = self.entries[i]
+            if prev_sys in cands and SYSTEM_FIRST.get(prev_sys) == tok:
+                self.entries = self.entries[:i] + [(tok, prev_sys)]
+                return self.stack
+
+        on_stack = {s for _, s in self.entries}
+        for sys in cands:
+            if SYSTEM_FIRST.get(sys) == tok and sys not in on_stack:
+                self.entries.append((tok, sys))
+                return self.stack
+
+        # Out of sequence. If the token belongs to the SAME system as the
+        # deepest entry it is a gap in that list, so replace. If it belongs to
+        # a DIFFERENT system it cannot be a sibling at all - it is a child, and
+        # replacing would drop its letter parent. v3 always replaced, which is
+        # how "(a) General. (1) ..." followed by a bare "(2)" produced the
+        # rootless citation 1926.102(2).
+        if self.entries:
+            deepest_sys = self.entries[-1][1]
+            if cands[0] == deepest_sys:
+                self.entries = self.entries[:-1] + [(tok, cands[0])]
+            else:
+                self.entries.append((tok, cands[0]))
         else:
-            self.stack = [tok]
-        return list(self.stack)
+            self.entries = [(tok, cands[0])]
+        return self.stack
 
 
 # --------------------------------------------------------------------------
@@ -230,23 +292,37 @@ def element_text(elem) -> str:
 
 
 def render_table(elem) -> str:
-    """Flatten a GPOTABLE into pipe-delimited lines so its values are indexable."""
+    """
+    Flatten a table into pipe-delimited lines so its values are indexable.
+
+    Falls back to flat text when the row/cell tags are not the ones we expect -
+    a table whose numbers reach the index in a clumsy shape is far better than
+    a table silently dropped, which is how the soil-classification and
+    scaffold-capacity limits went missing.
+    """
     lines: list[str] = []
-    ttitle = elem.find(".//TTITLE")
-    if ttitle is not None:
-        t = element_text(ttitle)
-        if t:
-            lines.append(t)
+    for tag in ("TTITLE", "TTL", "CAPTION"):
+        node = elem.find(f".//{tag}")
+        if node is not None:
+            t = element_text(node)
+            if t:
+                lines.append(t)
+            break
     boxhd = elem.find(".//BOXHD")
     if boxhd is not None:
-        heads = [element_text(c) for c in boxhd.iter("CHED")]
-        heads = [h for h in heads if h]
+        heads = [element_text(c) for c in boxhd.iter("CHED") if element_text(c)]
         if heads:
             lines.append(" | ".join(heads))
-    for row in elem.iter("ROW"):
-        cells = [element_text(c) for c in row.iter("ENT")]
-        if any(cells):
-            lines.append(" | ".join(cells))
+    for row_tag, cell_tag in (("ROW", "ENT"), ("TR", "TD"), ("TR", "TH")):
+        for row in elem.iter(row_tag):
+            cells = [element_text(c) for c in row.iter(cell_tag)]
+            if any(cells):
+                lines.append(" | ".join(cells))
+        if lines:
+            break
+    if not lines:
+        flat = element_text(elem)
+        return flat
     return "\n".join(lines)
 
 
@@ -261,10 +337,23 @@ def split_designator(text: str) -> tuple[list[str], str]:
 
 
 def extract_inline_heading(elem, body: str) -> str:
+    """
+    A paragraph's topic phrase is italicised immediately after the designator:
+        <P>(a) <I>Coverage.</I> Motor vehicles ...</P>
+
+    It must OPEN the body. v4 only required the italic run to appear somewhere
+    in the first 120 characters, so an italicised trailing URL - "Web site:
+    <E>http://techstreet.com</E>" - became the heading and then stuck to every
+    following paragraph in the section.
+    """
     for child in elem:
         if child.tag in ITALIC_TAGS:
             t = (child.text or "").strip()
-            if t and len(t) < 120 and body[:120].find(t) != -1:
+            if not t or len(t) > 120:
+                return ""
+            if "://" in t or "@" in t or t.startswith("www."):
+                return ""
+            if body.startswith(t):
                 return t.rstrip(". ").strip()
         break
     return ""
@@ -324,6 +413,8 @@ def osha_url(section_id: str) -> str:
 
 
 def classify(title_text: str, is_appendix: bool, head: str) -> str:
+    if "[reserved]" in f"{head} {title_text}".lower():
+        return "reserved"
     if is_appendix:
         blob = f"{head} {title_text}".lower()
         if "non-mandatory" in blob or "nonmandatory" in blob:
@@ -461,15 +552,37 @@ def parse_section(raw: dict[str, Any]) -> dict[str, Any]:
             continue
 
         groups, body = split_designator(text)
+        inline_heading = extract_inline_heading(node, body)
+
+        # GPO frequently folds a parent and its first child into one <P>:
+        #     (a) General requirements. (1) All vehicles shall have ...
+        # Seeing only "(a)" here leaves the following "(2)" with no "(1)"
+        # sibling on the stack, which is what produced rootless citations like
+        # 1926.102(2). v3 keyed this off the italic heading; GPO italicises the
+        # topic phrase only sometimes, so match the text shape instead.
+        if groups:
+            m = MERGED_CHILD.match(body)
+            if m:
+                extra = DESIGNATOR_GROUP.findall(m.group("des"))
+                # A merged child always OPENS its list, so its designator must
+                # be the first element of some numbering system. Without this
+                # guard "…; telephone: (877) 413-5184" reads as a child (877).
+                if extra and extra[0] not in FIRST_TOKEN_VALUES:
+                    extra = []
+                if extra and len(groups) + len(extra) <= 6:
+                    groups = groups + extra
+                    body = body[m.end():].strip()
+                    if not inline_heading:
+                        inline_heading = m.group("lead").rstrip(". ").strip()
+
         if groups:
             path = stack.reset(groups) if len(groups) > 1 else stack.push(groups[0])
             official = section_id + "".join(f"({g})" for g in path)
             level = len(path)
             designated += 1
         else:
-            official, level = "", max(len(stack.stack), 1)
+            path, official, level = [], "", max(len(stack.stack), 1)
 
-        inline_heading = extract_inline_heading(node, body)
         if inline_heading:
             current_heading = inline_heading
 
@@ -498,6 +611,9 @@ def parse_section(raw: dict[str, Any]) -> dict[str, Any]:
             prose_chunks.append(text)
 
     full_text = "\n\n".join(body_chunks)
+    kind = classify(title_text, is_appendix, head)
+    if not full_text.strip():
+        kind = "reserved"
 
     return {
         "part": raw["part"],
@@ -508,7 +624,7 @@ def parse_section(raw: dict[str, Any]) -> dict[str, Any]:
         "title": title,
         "source": osha_url(section_id),
         "gpo_source": "e-CFR",
-        "section_kind": classify(title_text, is_appendix, head),
+        "section_kind": kind,
         "is_appendix": is_appendix,
         "full_text": full_text,
         "section_summary": first_sentences("\n\n".join(prose_chunks), 600),
@@ -678,8 +794,7 @@ def validate(corpus: dict[str, dict[str, Any]]) -> int:
             warnings.append(f"citation {cite} not reconstructed")
             print(f"  warn  {cite} not found")
 
-    bad_paths = [o for o in all_official
-                 if re.match(r"^\d+\.\d+\(\d", o)]
+    bad_paths = [o for o in all_official if re.match(r"^\d+\.\d+\(\d", o)]
     if bad_paths:
         failures.append(
             f"{len(bad_paths)} citations start at a numeric level, e.g. "
@@ -689,7 +804,19 @@ def validate(corpus: dict[str, dict[str, Any]]) -> int:
     else:
         print("  ok    no citation begins at a numeric level")
 
+    if depth > 8:
+        failures.append(
+            f"deepest nesting is level {depth}; the CFR does not nest that far, "
+            "so the designator stack is running away")
+        deep = sorted(((r["stats"].get("max_depth", 0), r["section_id"])
+                       for r in corpus.values()), reverse=True)[:5]
+        print(f"  FAIL  nesting reaches level {depth}, deepest sections {deep}")
+    else:
+        print(f"  ok    nesting depth {depth} is within CFR limits")
+
     print("\n--- skeletal section scan ---")
+    print(f"  (reserved/removed sections excluded: "
+          f"{sum(1 for r in corpus.values() if r['section_kind'] == 'reserved')})")
     skeletal = [r for r in corpus.values()
                 if r["section_kind"] == "operative"
                 and r["stats"]["char_count"] < MIN_OPERATIVE_CHARS]
@@ -721,6 +848,72 @@ def validate(corpus: dict[str, dict[str, Any]]) -> int:
 # cli
 # --------------------------------------------------------------------------
 
+def explain_bad_paths(corpus: dict[str, dict[str, Any]], limit: int = 12) -> int:
+    """
+    Print the paragraphs whose citation lost its letter root, each with the
+    paragraph before it. The preceding paragraph is where the root was
+    supposed to come from, so its raw shape is the evidence we need.
+    """
+    shown = 0
+    print(f"\n{'=' * 68}\nROOTLESS CITATIONS - RAW CONTEXT\n{'=' * 68}")
+    for rec in corpus.values():
+        subs = sorted(rec["subsections"].values(), key=lambda s: s["ordinal"])
+        for idx, s in enumerate(subs):
+            o = s["official_subsection_id"]
+            if not o or not re.match(r"^\d+\.\d+\(\d", o):
+                continue
+            prev = subs[idx - 1] if idx else None
+            print(f"\n--- {o}   ({rec['section_id']}, ordinal {s['ordinal']}) ---")
+            if prev:
+                print(f"  PREV [{prev['official_subsection_id'] or '-'}] "
+                      f"{prev['text'][:260]}")
+            else:
+                print("  PREV (this is the first paragraph in the section)")
+            print(f"  THIS {s['text'][:260]}")
+            shown += 1
+            if shown >= limit:
+                print(f"\n... stopping at {limit}. "
+                      "Send this block back and the shape will be obvious.")
+                return 0
+    if not shown:
+        print("  none - every citation has a letter root")
+    return 0
+
+
+def tag_census(xml_path: Path, part: str) -> int:
+    """
+    Print every element tag that appears inside the part, with counts.
+
+    Use this when something is coming back empty - "tables extracted 0" means
+    either the tables are named something other than GPOTABLE in this feed, or
+    they are not where we are looking. Guessing is slower than counting.
+    """
+    from collections import Counter
+
+    tags: Counter = Counter()
+    inside_table: Counter = Counter()
+    for raw in iter_part_sections(xml_path, part):
+        for node in raw["element"].iter():
+            tags[node.tag] += 1
+            if node.tag in ("GPOTABLE", "TABLE"):
+                for child in node.iter():
+                    inside_table[child.tag] += 1
+
+    print(f"\nelement tags inside part {part}")
+    print("-" * 44)
+    for tag, n in tags.most_common(60):
+        mark = "  <-- table?" if "TAB" in tag.upper() or "ROW" in tag.upper() else ""
+        print(f"  {tag:<24} {n:>7}{mark}")
+    if inside_table:
+        print("\ntags inside table elements")
+        print("-" * 44)
+        for tag, n in inside_table.most_common(30):
+            print(f"  {tag:<24} {n:>7}")
+    else:
+        print("\nno GPOTABLE/TABLE elements found at all")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -732,12 +925,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--legacy-header", action="store_true")
     ap.add_argument("--map-doc-ids-from", type=Path)
     ap.add_argument("--validate-only", action="store_true")
+    ap.add_argument("--tag-census", action="store_true",
+                    help="print the element-tag histogram inside the part and exit")
+    ap.add_argument("--explain-bad-paths", action="store_true",
+                    help="dump rootless citations with their preceding paragraph")
     args = ap.parse_args(argv)
 
     out_path = Path(args.out)
 
-    if args.validate_only:
-        return validate(json.loads(out_path.read_text(encoding="utf-8")))
+    if args.validate_only or args.explain_bad_paths:
+        corpus = json.loads(out_path.read_text(encoding="utf-8"))
+        if args.explain_bad_paths:
+            return explain_bad_paths(corpus)
+        return validate(corpus)
+
+    if args.tag_census:
+        xml_path = args.xml or download_bulk_xml(args.cache_dir, args.force_download)
+        return tag_census(xml_path, args.part)
 
     doc_id_map = None
     if args.map_doc_ids_from:

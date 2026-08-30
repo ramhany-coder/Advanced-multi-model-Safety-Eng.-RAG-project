@@ -6,13 +6,15 @@ from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
 try:
-    from presidio_analyzer.nlp_engine import TransformersNlpEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider, TransformersNlpEngine
 except Exception:
+    NlpEngineProvider = None
     TransformersNlpEngine = None
 
 try:
-    from presidio_image_redactor import ImageRedactorEngine
+    from presidio_image_redactor import ImageAnalyzerEngine, ImageRedactorEngine
 except Exception:
+    ImageAnalyzerEngine = None
     ImageRedactorEngine = None
 
 from config import settings
@@ -34,9 +36,32 @@ _presidio_engines = None  # (analyzer, anonymizer, image_redactor) once resolved
 
 def _init_presidio_engines_worker() -> None:
     try:
-        eng_analyzer = AnalyzerEngine()
+        # NlpEngineProvider lets the spaCy model be swapped via
+        # settings.PII_SPACY_MODEL_NAME (e.g. "en_core_web_sm" on a
+        # memory-constrained deployment); a bare AnalyzerEngine() always loads
+        # Presidio's hardcoded default ("en_core_web_lg") regardless.
+        if NlpEngineProvider is not None:
+            nlp_engine = NlpEngineProvider(
+                nlp_configuration={
+                    "nlp_engine_name": "spacy",
+                    "models": [
+                        {"lang_code": "en", "model_name": settings.PII_SPACY_MODEL_NAME}
+                    ],
+                }
+            ).create_engine()
+            eng_analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+        else:
+            eng_analyzer = AnalyzerEngine()
         eng_anonymizer = AnonymizerEngine()
-        eng_image = ImageRedactorEngine() if ImageRedactorEngine is not None else None
+        # Passing our already-built eng_analyzer in means image redaction reuses
+        # the same spaCy NLP engine (respecting PII_SPACY_MODEL_NAME) instead of
+        # ImageRedactorEngine's default of silently building its own *second*
+        # full AnalyzerEngine (always en_core_web_lg, ignoring our config).
+        eng_image = (
+            ImageRedactorEngine(ImageAnalyzerEngine(analyzer_engine=eng_analyzer))
+            if ImageRedactorEngine is not None and ImageAnalyzerEngine is not None
+            else None
+        )
         _presidio_result_queue.put((eng_analyzer, eng_anonymizer, eng_image))
     except Exception as e:
         logger.error("Presidio engine initialization failed: %s", e)
@@ -121,6 +146,13 @@ def _get_multilingual_engine():
     """Return the multilingual analyzer (or None), lazily built the same way
     as _get_presidio_engines. Reuses the English pipeline's AnonymizerEngine --
     anonymization is language-agnostic, it only needs the analyzer results."""
+    if not settings.ENABLE_MULTILINGUAL_PII:
+        # Disabled for this deployment (e.g. a memory-constrained host where
+        # the ~1GB transformer isn't affordable): never download/load it, and
+        # never spawn its init thread. Callers fall back to the English
+        # engine's pattern recognizers ("presidio_partial" coverage).
+        return None
+
     global _multilingual_engine
     if _multilingual_engine is not None:
         return _multilingual_engine

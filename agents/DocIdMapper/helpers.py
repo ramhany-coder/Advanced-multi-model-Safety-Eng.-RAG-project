@@ -1,4 +1,21 @@
 import json
+import re
+
+_BASE_SECTION_ID_RE = re.compile(r"^\s*(1926\.\d+)")
+
+
+def base_section_id(raw: str) -> str:
+    """
+    Reduce an LLM-produced section identifier to its bare '1926.<number>' form.
+
+    The prompt asks for base section numbers only, but the model sometimes
+    answers with a paragraph-level citation instead (e.g. "1926.602(a)(9)" or
+    a span like "1926.602(a)(9)-(a)(10)"). Comparing that string exactly
+    against the registry's base IDs would silently drop an otherwise valid,
+    relevant section, so strip anything after the base number before matching.
+    """
+    match = _BASE_SECTION_ID_RE.match(raw or "")
+    return match.group(1) if match else (raw or "").strip()
 
 
 def _load_registry_by_section_id(registry_path: str) -> dict:

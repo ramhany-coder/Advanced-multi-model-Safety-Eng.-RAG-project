@@ -28,8 +28,11 @@ sentence-transformers
 rank_bm25
 huggingface_hub
 
-# --- spaCy models (used by Presidio's default NLP engine) ---
+# --- spaCy models (used by Presidio's English NLP engine) ---
+# en_core_web_lg is the accurate default; en_core_web_sm is the low-memory
+# option selected via PII_SPACY_MODEL_NAME on constrained deployments.
 https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
 spacy-huggingface-pipelines
 

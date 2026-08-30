@@ -14,15 +14,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 # first live request.
 from api.endpoints import router
 from agents.PII.helpers import warm_up_pii_engines
+from config import settings
 
 logger = logging.getLogger("api.app")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Startup: verifying local PII models (downloads only if missing)...")
-    warm_up_pii_engines()
-    logger.info("Model check complete.")
+    if settings.WARM_UP_PII_ON_STARTUP:
+        logger.info("Startup: verifying local PII models (downloads only if missing)...")
+        warm_up_pii_engines()
+        logger.info("Model check complete.")
+    else:
+        logger.info(
+            "Skipping PII engine warm-up at startup (WARM_UP_PII_ON_STARTUP=False); "
+            "engines will load lazily on first use instead."
+        )
     yield
 
 

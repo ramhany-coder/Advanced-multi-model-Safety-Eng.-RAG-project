@@ -109,6 +109,26 @@ class Whisper:
                 pass
 
 
-stt_model = Whisper(model_size_or_path=settings.WHISPER_MODEL_SIZE or DEFAULT_MODEL_SIZE,
-                        device="cpu",
-                        compute_type="int8")
+class _LazyWhisper:
+    """Defers constructing (downloading/loading) the real Whisper model until
+    the first actual transcription call, instead of at import time -- so
+    every process that imports this module (any agent import chain) doesn't
+    pull a few hundred MB of Whisper weights into memory whether or not audio
+    is ever used in that process."""
+
+    _instance: Optional["Whisper"] = None
+
+    def _get(self) -> "Whisper":
+        if self._instance is None:
+            self._instance = Whisper(
+                model_size_or_path=settings.WHISPER_MODEL_SIZE or DEFAULT_MODEL_SIZE,
+                device="cpu",
+                compute_type="int8",
+            )
+        return self._instance
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+stt_model = _LazyWhisper()

@@ -27,6 +27,18 @@ class Settings(BaseSettings):
 
     PII_TRANSFORMER_MODEL_NAME: str = "Davlan/xlm-roberta-base-ner-hrl"
     PII_TRANSFORMER_MODEL_PATH: str = "models/pii_transformer"
+
+    # Deployment-mode knobs for memory-constrained hosts (e.g. Streamlit
+    # Community Cloud's free tier, ~1GB RAM). Defaults reproduce today's
+    # behavior (full accuracy, eager warm-up) everywhere; override only via
+    # env/secrets on the constrained deployment.
+    WARM_UP_PII_ON_STARTUP: bool = True
+    ENABLE_MULTILINGUAL_PII: bool = True
+    # Presidio's English NLP engine. "en_core_web_lg" (~560MB, word vectors)
+    # is the most accurate; "en_core_web_sm" (~13MB, no vectors) trades PII/NER
+    # accuracy for a much smaller memory footprint.
+    PII_SPACY_MODEL_NAME: str = "en_core_web_lg"
+
     # 2. Use SettingsConfigDict instead of ConfigDict for Pydantic Settings
     model_config = SettingsConfigDict(
         env_file=".env",
