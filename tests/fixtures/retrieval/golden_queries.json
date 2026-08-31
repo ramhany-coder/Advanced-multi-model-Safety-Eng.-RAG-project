@@ -6,12 +6,12 @@
   },
   "ppe_hazardous_chemicals": {
     "query": "What PPE is required for employees exposed to hazardous chemicals?",
-    "expected_section_ids": ["1926.65 App B", "1926.65 App C", "1926.62", "1926.55"],
+    "expected_section_ids": ["1926.65", "1926.65 App B", "1926.65 App C", "1926.62", "1926.55"],
     "top_k": 5
   },
   "injury_recordkeeping": {
     "query": "What are the recordkeeping requirements for workplace injuries?",
-    "expected_section_ids": ["1926.22"],
+    "expected_section_ids": ["1926.33", "1926.1091"],
     "top_k": 5
   },
   "fire_extinguishers": {

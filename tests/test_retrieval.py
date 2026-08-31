@@ -34,6 +34,8 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures" / "retrieval"
 GOLDEN_QUERIES = json.loads((FIXTURES_DIR / "golden_queries.json").read_text(encoding="utf-8"))
 
 KNOWN_SECTION_ID = "1926.22"  # Recording and reporting of injuries -- known to exist in registry.json
+# (marked [Reserved] in the CFR itself, so it's fine for this existence/filter check
+# but must never be used as a *content* precision target -- see golden_queries.json)
 
 
 def _section_ids(content: list) -> list[str]:
