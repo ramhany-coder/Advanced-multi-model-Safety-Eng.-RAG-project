@@ -5,7 +5,7 @@ from agents.helpers import combine_evidence, format_context_for_prompt
 from agents.Responser.prompts import responser_humman_prompt, responser_system_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"
@@ -16,7 +16,7 @@ FALLBACK_ORDER = [PRIMARY_ROUTER, SECONDARY_ROUTER]
 # unclamped context block can get the request rejected outright before it
 # even runs. Only the groq attempt gets capped -- gpt has more headroom and
 # should still see everything.
-GROQ_CONTEXT_MAX_DOCS = 4
+GROQ_CONTEXT_MAX_DOCS = 10
 GROQ_CONTEXT_MAX_CHARS_PER_DOC = 900
 
 responser_llm = FallBack(

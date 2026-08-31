@@ -4,7 +4,7 @@ from agents.llm.fallback import FallBack
 from agents.Rewrite.prompts import rewrite_human_prompt, rewrite_system_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

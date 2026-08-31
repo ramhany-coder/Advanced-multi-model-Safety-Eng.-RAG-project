@@ -10,7 +10,6 @@ class State (BaseModel):
     cached : Optional[bool] = None
     origin_en : Optional[bool] = None
     language : Optional[str] = None
-    section_ids : Optional[list[str]] = None
     language_code: Optional[str] = None
     clean_query : Optional[str] = None
     chat_hist : Annotated[list,add_messages] = []
@@ -20,11 +19,10 @@ class State (BaseModel):
     image_exp : Optional[str] = None
     rewritten_query : Optional[str] = None
     merged : Optional[str] = None
-    context : Optional[list] = None
+    sub_queries : list[str] = []
+    decomposer_error : Optional[str] = None
     content : Optional[list] = None
-    need_more : Optional[bool] = None
     retried : Optional[bool] = None
-    doc_id_mapper_error : Optional[str] = None
     retrieval_mode : Optional[str] = None
     bm25_error : Optional[str] = None
     reranker_error : Optional[str] = None

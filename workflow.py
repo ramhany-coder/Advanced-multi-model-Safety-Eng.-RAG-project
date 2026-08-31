@@ -15,11 +15,11 @@ from agents.Rewrite.agent import rewrite_agent
 from agents.ImageAnalysis.agent import image_exp_agent
 from agents.Merger.agent import merging_agent
 from agents.Cache.agent import check_cache_agent, caching_agent, cache_reasoner_agent
+from agents.QueryDecomposer.agent import query_decomposer_agent
 from agents.Responser.agent import responser_agent
 from agents.Ranker.agent import ranker_agent, rejection_response_agent
 from agents.ResponseTranslator.agent import response_translator
 from agents.Retrieve.agent import hyb_retriver_agent
-from agents.DocIdMapper.agent import doc_id_mapper_agent
 from agents.Reranker.agent import reranker_agent
 
 
@@ -164,20 +164,18 @@ def safe_caching_agent(state: State) -> dict[str, Any]:
     return caching_agent(state) or {}
 
 
-def cache_router(state: State) -> list[Literal["jump", "reason", "doc_id_mapper", "retriever"]]:
+def cache_router(state: State) -> list[Literal["jump", "reason", "retriever"]]:
     if not bool(state.get("cached")):
-        # doc_id_mapper and the hybrid retriever are both mandatory and run
-        # side by side; see the join at "reranker" below.
-        return ["doc_id_mapper", "retriever"]
+        return ["retriever"]
 
     # The LLM cache-alignment check is optional: when disabled, a cache hit
     # is trusted as before and returned straight away.
     return ["reason"] if settings.ENABLE_CACHE_REASONING else ["jump"]
 
 
-def cache_reasoning_router(state: State) -> list[Literal["use_cache", "doc_id_mapper", "retriever"]]:
+def cache_reasoning_router(state: State) -> list[Literal["use_cache", "retriever"]]:
     if state.get("cache_verdict") == "recompute":
-        return ["doc_id_mapper", "retriever"]
+        return ["retriever"]
     return ["use_cache"]
 
 
@@ -196,9 +194,9 @@ def rank_router(state: State) -> Literal["accepted", "retry", "rejected"]:
     if rank_value >= 7:
         return "accepted"
 
-    # Give the pipeline exactly one retry pass -- a fresh doc-ID mapping plus
-    # a fresh hybrid retrieval -- before giving up on a low-confidence answer.
-    if not state.get("need_more") and not state.get("retried"):
+    # Give the pipeline exactly one retry pass -- a fresh hybrid retrieval --
+    # before giving up on a low-confidence answer.
+    if not state.get("retried"):
         return "retry"
 
     return "rejected"
@@ -215,7 +213,7 @@ class Workflow:
         self.merger = safe_merging_agent
         self.is_cache = check_cache_agent
         self.cache_reasoner = cache_reasoner_agent
-        self.doc_id_mapper = doc_id_mapper_agent
+        self.query_decomposer = query_decomposer_agent
         self.retriever = hyb_retriver_agent
         self.reranker = reranker_agent
         self.rewriter = rewrite_agent
@@ -248,7 +246,7 @@ class Workflow:
         graph.add_node("skip_merge", skip_merge_agent)
         graph.add_node("cache_check", self.is_cache)
         graph.add_node("cache_reasoner", self.cache_reasoner)
-        graph.add_node("doc_id_mapper", self.doc_id_mapper)
+        graph.add_node("query_decomposer", self.query_decomposer)
         graph.add_node("retriever", self.retriever)
         graph.add_node("reranker", self.reranker)
         graph.add_node("responser", self.responser)
@@ -315,8 +313,7 @@ class Workflow:
             {
                 "jump": "response_trans",
                 "reason": "cache_reasoner",
-                "doc_id_mapper": "doc_id_mapper",
-                "retriever": "retriever",
+                "retriever": "query_decomposer",
             },
         )
         graph.add_conditional_edges(
@@ -324,15 +321,18 @@ class Workflow:
             cache_reasoning_router,
             {
                 "use_cache": "ranker",
-                "doc_id_mapper": "doc_id_mapper",
-                "retriever": "retriever",
+                "retriever": "query_decomposer",
             },
         )
-        # doc_id_mapper and retriever always both run, side by side; reranker
-        # is a join that fires once both have completed and concatenates
-        # their evidence (state['content'] + state['context']) via
-        # combine_evidence() before the responser sees it.
-        graph.add_edge(["doc_id_mapper", "retriever"], "reranker")
+        # Decomposition only runs on an actual cache miss (see the two
+        # "retriever" routes above) -- a cache hit never needs sub_queries.
+        graph.add_edge("query_decomposer", "retriever")
+        # The retry pass (mark_retry, below) goes straight back to the
+        # retriever and reuses the sub_queries already computed for this
+        # merged query -- no need to re-decompose an unchanged query.
+        # reranker dedupes/trims state['content'] via combine_evidence()
+        # before the responser sees it.
+        graph.add_edge("retriever", "reranker")
         graph.add_edge("reranker", "responser")
         graph.add_edge("responser", "ranker")
         graph.add_conditional_edges(
@@ -344,9 +344,6 @@ class Workflow:
                 "rejected": "rejection_response",
             },
         )
-        # Re-run both branches so the join at "reranker" (a barrier that
-        # resets after firing) is satisfied again on retry.
-        graph.add_edge("mark_retry", "doc_id_mapper")
         graph.add_edge("mark_retry", "retriever")
         graph.add_edge("rejection_response", "response_trans")
         graph.add_edge("caching", "response_trans")

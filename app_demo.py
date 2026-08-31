@@ -346,10 +346,10 @@ def render_debug_panel(result: Dict[str, Any]):
         st.markdown("#### English Internal Response")
         st.write(result.get("response") or "N/A")
 
-        context = result.get("context")
-        if context:
-            st.markdown("#### Retrieved Context Preview")
-            st.write(context[:3] if isinstance(context, list) else context)
+        content = result.get("content")
+        if content:
+            st.markdown("#### Retrieved Content Preview")
+            st.write(content[:3] if isinstance(content, list) else content)
 
         st.divider()
         render_full_state(result)
@@ -372,7 +372,6 @@ FALLBACK_STAGE_NAMES = [
     "merger",
     "cache-check",
     "cache-write",
-    "doc-id-mapper",
     "retriever",
     "reranker",
     "responser",
@@ -394,11 +393,10 @@ STAGE_EXAMPLES: Dict[str, Dict[str, Any]] = {
     "merger": {"rewritten_query": "fall protection scaffold requirements", "image_exp": ""},
     "cache-check": {"merged": "fall protection scaffold requirements"},
     "cache-write": {"merged": "fall protection scaffold requirements", "response": "Example grounded answer.", "cached": False},
-    "doc-id-mapper": {"merged": "fall protection scaffold requirements"},
     "retriever": {"merged": "fall protection scaffold requirements", "k": 5},
-    "reranker": {"merged": "fall protection scaffold requirements", "context": [], "content": []},
-    "responser": {"merged": "fall protection scaffold requirements", "context": [], "content": []},
-    "ranker": {"eng_query": "Does a worker need fall protection?", "response": "Example grounded answer.", "context": [], "content": []},
+    "reranker": {"merged": "fall protection scaffold requirements", "content": []},
+    "responser": {"merged": "fall protection scaffold requirements", "content": []},
+    "ranker": {"eng_query": "Does a worker need fall protection?", "response": "Example grounded answer.", "content": []},
     "rejection-response": {"rank": 3},
     "response-translator": {"response": "Example grounded answer.", "language": "Arabic", "language_code": "ar"},
 }

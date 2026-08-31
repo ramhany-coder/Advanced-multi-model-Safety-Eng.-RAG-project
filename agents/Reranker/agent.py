@@ -7,7 +7,7 @@ from agents.Reranker.prompts import reranker_human_prompt, reranker_system_promp
 from agents.Reranker.schemas import RerankSelection
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"
@@ -16,7 +16,7 @@ FALLBACK_ORDER = [PRIMARY_ROUTER, SECONDARY_ROUTER]
 
 # Only rerank when there's actually more evidence than the responser needs.
 RERANK_THRESHOLD = 5
-RERANK_TOP_K = 5
+RERANK_TOP_K = 10
 
 reranker_llm = FallBack(
     **{
@@ -31,22 +31,18 @@ def reranker_agent(state) -> dict:
     Trim the retrieved evidence down to the RERANK_TOP_K chunks most relevant
     to the merged query before the responser sees it.
 
-    Runs unconditionally right before the responser, regardless of whether the
-    evidence came from the doc-ID mapper alone (skip_retrieval path), the
-    hybrid retriever (need_retrieval path), or both -- combine_evidence()
-    already merges and dedupes state['content'] + state['context'], so this
-    agent doesn't need to know which path produced them.
+    Runs unconditionally right before the responser -- combine_evidence()
+    dedupes state['content'] so this agent always works from a clean list.
 
-    It's a no-op (aside from consolidating into 'context') when there are
-    RERANK_THRESHOLD or fewer candidate chunks to begin with.
+    It's a no-op when there are RERANK_THRESHOLD or fewer candidate chunks
+    to begin with.
     """
     query = state.get("merged") or ""
     combined = combine_evidence(state)
 
     if len(combined) <= RERANK_THRESHOLD:
-        # Nothing to trim, but still consolidate into 'context' so downstream
-        # nodes have a single, consistent source of evidence to read from.
-        return {"context": combined, "content": []}
+        # Nothing to trim.
+        return {"content": combined}
 
     messages = [
         SystemMessage(content=reranker_system_prompt(RERANK_TOP_K)),
@@ -66,10 +62,9 @@ def reranker_agent(state) -> dict:
         )
         ranked_indices = result.get("ranked_chunk_indices") or []
         selected = select_top_chunks(combined, ranked_indices, RERANK_TOP_K)
-        return {"context": selected, "content": []}
+        return {"content": selected}
     except Exception as e:
         return {
-            "context": combined[:RERANK_TOP_K],
-            "content": [],
+            "content": combined[:RERANK_TOP_K],
             "reranker_error": str(e),
         }

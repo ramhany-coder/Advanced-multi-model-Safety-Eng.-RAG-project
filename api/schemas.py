@@ -16,7 +16,6 @@ class StatePayload(BaseModel):
     cached: Optional[bool] = None
     origin_en: Optional[bool] = None
     language: Optional[str] = None
-    section_ids: Optional[List[str]] = None
     language_code: Optional[str] = None
     clean_query: Optional[str] = None
     chat_hist: Optional[List[Any]] = None
@@ -26,9 +25,7 @@ class StatePayload(BaseModel):
     image_exp: Optional[str] = None
     rewritten_query: Optional[str] = None
     merged: Optional[str] = None
-    context: Optional[List[Any]] = None
     content: Optional[List[Any]] = None
-    need_more: Optional[bool] = None
     retried: Optional[bool] = None
     rank: Optional[int] = None
     response: Optional[str] = None

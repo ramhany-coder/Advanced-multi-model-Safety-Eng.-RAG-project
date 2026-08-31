@@ -35,7 +35,7 @@ class Llm :
 
     # 2. Groq
     @staticmethod
-    def groq(model: str, temp: float, reasoning_effort: str | None = None):
+    def groq(model: str = "qwen/qwen3.6-27b", temp: float = None, reasoning_effort: str | None = None):
         kwargs = {}
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort

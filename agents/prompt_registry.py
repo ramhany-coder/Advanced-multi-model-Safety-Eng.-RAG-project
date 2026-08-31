@@ -10,8 +10,8 @@ the attribute on the module that owns the live reference read at call time:
 - Plain string prompts imported directly into an agent.py: patch the agent
   module (that's the name the agent function actually reads).
 - Prompts built from a module-level template string by a function defined in
-  prompts.py (DocIdMapper, Reranker): patch the prompts module, since that
-  function reads the template from its own module's globals.
+  prompts.py (Reranker): patch the prompts module, since that function reads
+  the template from its own module's globals.
 """
 
 from __future__ import annotations
@@ -57,6 +57,10 @@ PROMPT_FIELDS: list[PromptField] = [
         "agents.QueryTranslator.agent", "query_translator_system_prompt",
     ),
     PromptField(
+        "query_decomposer_system", "QueryDecomposer", "System prompt",
+        "agents.QueryDecomposer.agent", "query_decomposer_system_prompt",
+    ),
+    PromptField(
         "image_analysis_system", "ImageAnalysis", "System prompt",
         "agents.ImageAnalysis.agent", "image_system_prompt",
     ),
@@ -71,13 +75,6 @@ PROMPT_FIELDS: list[PromptField] = [
     PromptField(
         "response_translator_system", "ResponseTranslator", "System prompt",
         "agents.ResponseTranslator.agent", "response_translator_system_prompt",
-    ),
-    PromptField(
-        "doc_id_mapper_system_template", "DocIdMapper", "System prompt template",
-        "agents.DocIdMapper.prompts", "doc_id_mapping_system_prompt_template",
-        help="Formatted with .format(examples_block=...) before use -- keep the "
-             "{examples_block} placeholder somewhere in the text.",
-        required_placeholders=("{examples_block}",),
     ),
     PromptField(
         "reranker_system_template", "Reranker", "System prompt template",

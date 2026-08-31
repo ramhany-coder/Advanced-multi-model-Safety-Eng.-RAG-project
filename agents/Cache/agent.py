@@ -10,7 +10,7 @@ from agents.Cache.schemas import CacheAlignmentVerdict
 cache.init(pre_embedding_func=get_prompt)
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

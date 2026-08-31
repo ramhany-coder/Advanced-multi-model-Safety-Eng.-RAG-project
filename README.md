@@ -56,11 +56,9 @@ Translation back to the user's original language (skipped if already English)
 ```
 Retrieval, ranking, and caching are always keyed on the English-normalized query, so Arabic, English, and French phrasings of the same safety question converge on the **same cache entry and the same retrieval path**. See [Multilinguality: How It Works & How to Extend It](#multilinguality-how-it-works--how-to-extend-it) for the full detail and how to add another language.
 
-### 4. Dual-Strategy Retrieval, Fused by an LLM Reranker
-Two independent retrieval strategies always run **in parallel** and are joined at the reranker, rather than one gating the other:
-1. **Doc-ID Mapper** (`agents/DocIdMapper`): an LLM maps the query directly to known OSHA `section_id`s using its own domain knowledge of 29 CFR 1926 — including *cross-cutting* duties that live outside the section a naive title-match would suggest (e.g. a "loading/unloading a truck" query must pull in 1926.651's falling-loads paragraph even though 1926.651 is titled as an excavation section). Section IDs the model over-specifies to a paragraph level (`1926.602(a)(9)`) are normalized back to their base section (`1926.602`) before being matched against the known registry.
-2. **Hybrid Retriever** (`agents/Retrieve`): runs unconditionally, side by side with the doc-ID mapper, over the *full* OSHA corpus — combining **dense semantic search** (Chroma + `sentence-transformers/all-MiniLM-L6-v2`) with **sparse BM25**, fused via a weighted `EnsembleRetriever` (0.6 dense / 0.4 sparse).
-3. **Join + LLM Reranker** (`agents/Reranker`): a LangGraph fan-in barrier waits for both strategies to finish, deduplicates their combined evidence by `doc_id`, and — only when there are more than 5 candidate chunks — asks an LLM to select the 5 most relevant before the responser sees them. Running both strategies unconditionally (rather than short-circuiting one) trades a small, fixed retrieval cost for evidence-recall robustness: the doc-ID mapper's domain knowledge and the hybrid retriever's literal query match cover each other's blind spots.
+### 4. Hybrid Retrieval, Trimmed by an LLM Reranker
+1. **Hybrid Retriever** (`agents/Retrieve`): runs unconditionally over the *full* OSHA corpus — combining **dense semantic search** (Chroma + `sentence-transformers/all-MiniLM-L6-v2`) with **sparse BM25**, fused via a weighted `EnsembleRetriever` (0.6 dense / 0.4 sparse).
+2. **LLM Reranker** (`agents/Reranker`): dedupes the retrieved evidence by `doc_id`, and — only when there are more than 5 candidate chunks — asks an LLM to select the most relevant before the responser sees them.
 
 The corpus: **374 OSHA 29 CFR 1926 sections**, expanded into **5,818 subsection evidence chunks**, indexed as **6,192 dense vectors** and **5,818 BM25 documents**.
 
@@ -69,11 +67,11 @@ The corpus: **374 OSHA 29 CFR 1926 sections**, expanded into **5,818 subsection 
 - An optional **LLM cache-alignment auditor** (`cache_reasoner_agent`, toggled by `ENABLE_CACHE_REASONING`) that checks whether a cache *hit* actually still answers the *current* query before trusting it — semantic caches can match a near-duplicate rather than an identical past query, and this step decides to **reuse**, **refine**, or **discard and recompute** the cached answer instead of blindly returning it.
 
 ### 6. QA Ranker with a Bounded Retry Loop
-Every generated answer is scored 0–10 for groundedness against the retrieved evidence. A score ≥ 7 is cached and returned. A low score gets **exactly one retry** — re-running both retrieval branches — but only if the doc-ID mapper had judged its own section picks as already sufficient (`need_more=False`); if it had already flagged that more evidence was needed, a retry would just repeat the same query against the same corpus, so the system skips straight to a transparent, safe rejection message instead. Either way, it never silently loops forever, and never presents a low-confidence guess as authoritative.
+Every generated answer is scored 0–10 for groundedness against the retrieved evidence. A score ≥ 7 is cached and returned. A low score gets **exactly one retry** — re-running hybrid retrieval — before the system gives up and returns a transparent, safe rejection message instead. Either way, it never silently loops forever, and never presents a low-confidence guess as authoritative.
 
 ### 7. LLM Orchestration & Resilience
 - A provider-agnostic `Llm` factory (`agents/llm/llm_models.py`) wraps **Groq, OpenAI, Google Gemini, and local Ollama** behind one interface.
-- A `FallBack` circuit-breaker (`agents/llm/fallback.py`) tries a primary router (Groq's `openai/gpt-oss-20b`, tuned for low latency/cost) and falls back to a secondary (`gpt-4o-mini`) on any failure — used consistently across the doc-ID mapper, reranker, ranker, and cache auditor.
+- A `FallBack` circuit-breaker (`agents/llm/fallback.py`) tries a primary router (Groq's `openai/gpt-oss-20b`, tuned for low latency/cost) and falls back to a secondary (`gpt-4o-mini`) on any failure — used consistently across the reranker, ranker, and cache auditor.
 - Handles a real Groq interop edge case: on forced structured output, Groq can reject a response as `tool_use_failed` even when the model produced perfectly valid schema JSON as plain content — the fallback layer recovers that JSON from the error body instead of discarding a good answer (covered by a dedicated, fully-mocked unit test suite).
 - Tunes Groq's `reasoning_effort` per call so `gpt-oss`'s hidden reasoning channel doesn't consume the entire token budget before the model writes its actual (schema-constrained) answer.
 
@@ -108,21 +106,17 @@ flowchart TD
 
     CACHE -->|hit, reasoning off| RESPTRANS
     CACHE -->|hit, reasoning on| CACHEREASON[Cache Alignment Auditor - LLM]
-    CACHE -->|miss| DOCID[Doc-ID Mapper - LLM section lookup]
     CACHE -->|miss| RETRIEVE[Hybrid Retrieval - Chroma dense + BM25 sparse]
 
     CACHEREASON -->|reuse / refine| RANKER
-    CACHEREASON -->|recompute| DOCID
     CACHEREASON -->|recompute| RETRIEVE
 
-    DOCID --> RERANK[Join + LLM Reranker - top 5]
-    RETRIEVE --> RERANK
+    RETRIEVE --> RERANK[LLM Reranker - top 5]
     RERANK --> RESPOND[Response Synthesis - LLM]
     RESPOND --> RANKER[QA Ranker - groundedness 0-10]
 
     RANKER -->|score >= 7| CACHEWRITE[Write English Response to Cache]
     RANKER -->|low score, first miss| RETRY[Mark Retry]
-    RETRY --> DOCID
     RETRY --> RETRIEVE
     RANKER -->|low score, already retried| REJECT[Safe Rejection Response]
 
@@ -132,7 +126,7 @@ flowchart TD
     RESPTRANS --> DONE([Final Response])
 ```
 
-This graph is built with **LangGraph** (`workflow.py: Workflow.compile`) over a typed Pydantic `State` (`models.py`) shared by every node — 19 real agent/control nodes, conditional edges, a parallel join, and a bounded self-loop.
+This graph is built with **LangGraph** (`workflow.py: Workflow.compile`) over a typed Pydantic `State` (`models.py`) shared by every node — 18 real agent/control nodes, conditional edges, and a bounded self-loop.
 
 ### Agent Reference
 
@@ -147,9 +141,8 @@ This graph is built with **LangGraph** (`workflow.py: Workflow.compile`) over a 
 | `merger` | `agents/Merger` | Fuse text + image analysis into one retrieval payload |
 | `cache_check` / `caching` | `agents/Cache` | English-only semantic cache read/write (GPTCache) |
 | `cache_reasoner` | `agents/Cache` | LLM audit of a cache hit's alignment with the live query |
-| `doc_id_mapper` | `agents/DocIdMapper` | LLM-driven direct section-ID lookup (runs in parallel with `retriever`, not before it) |
-| `retriever` | `agents/Retrieve` | Hybrid dense (Chroma) + sparse (BM25) retrieval over the full corpus (runs in parallel with `doc_id_mapper`) |
-| `reranker` | `agents/Reranker` | Fan-in join for the two retrieval branches; dedupes their evidence and reranks down to the top-5 chunks |
+| `retriever` | `agents/Retrieve` | Hybrid dense (Chroma) + sparse (BM25) retrieval over the full corpus |
+| `reranker` | `agents/Reranker` | Dedupes retrieved evidence by `doc_id` and reranks down to the top-5 chunks |
 | `responser` | `agents/Responser` | Grounded compliance-answer synthesis |
 | `ranker` | `agents/Ranker` | Groundedness scoring + safe rejection fallback |
 | `response_trans` | `agents/ResponseTranslator` | Translate the validated answer back to the user's language |
@@ -163,7 +156,6 @@ This graph is built with **LangGraph** (`workflow.py: Workflow.compile`) over a 
 ├── agents/
 │   ├── Audio/                # audio_transcription_agent + faster-whisper wrapper
 │   ├── Cache/                # check_cache_agent, cache_reasoner_agent, caching_agent (GPTCache)
-│   ├── DocIdMapper/          # LLM-driven direct OSHA section-ID lookup
 │   ├── ImageAnalysis/        # vision-LLM job-site safety analysis
 │   ├── LanguageDetector/     # local (non-LLM) language identification
 │   ├── Merger/                # multimodal query fusion
@@ -246,12 +238,12 @@ GPT_API=                 # OpenAI API key (secondary/fallback model + Whisper cl
 GEMINI_API=               # Google Gemini API key
 GROQ_API=                  # Groq API key (primary model for most agents)
 OLLAMA_PATH=http://localhost:11434   # optional local inference
-PARENT_PATH=parent_store/registry.json
+PARENT_PATH=chunks_1926.json
 ```
 All other settings in `config.py` (embedding model, Whisper size, PII models, feature flags) have working defaults — no changes are required to run the app as-is.
 
 ### 3. Embedding cache
-The pre-built OSHA embedding cache is already committed under `cache/osha_chroma/` — no build step is needed to run the app out of the box. Only rebuild it if you change `parent_store/registry.json` or the embedding model:
+The pre-built OSHA embedding cache is already committed under `cache/osha_chroma/` — no build step is needed to run the app out of the box. Only rebuild it if you change `chunks_1926.json` (the file `PARENT_PATH` points to) or the embedding model:
 ```bash
 python scripts/build_osha_embeddings.py
 ```

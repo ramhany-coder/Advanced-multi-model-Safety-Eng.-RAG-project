@@ -4,7 +4,7 @@ from agents.llm.fallback import FallBack
 from agents.Merger.prompts import merging_humman_prompt, system_merging_prompt
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"

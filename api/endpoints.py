@@ -10,7 +10,6 @@ from agents.QueryTranslator.agent import user_query_translator
 from agents.Rewrite.agent import rewrite_agent
 from agents.ImageAnalysis.agent import image_exp_agent
 from agents.Cache.agent import check_cache_agent, caching_agent
-from agents.DocIdMapper.agent import doc_id_mapper_agent
 from agents.Retrieve.agent import hyb_retriver_agent
 from agents.Reranker.agent import reranker_agent
 from agents.Responser.agent import responser_agent
@@ -37,7 +36,6 @@ STAGE_AGENTS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "merger": safe_merging_agent,
     "cache-check": check_cache_agent,
     "cache-write": lambda state: caching_agent(state) or {},
-    "doc-id-mapper": doc_id_mapper_agent,
     "retriever": hyb_retriver_agent,
     "reranker": reranker_agent,
     "responser": responser_agent,

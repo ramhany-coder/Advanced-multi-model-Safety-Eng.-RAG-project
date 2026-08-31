@@ -49,17 +49,14 @@ def validate_router(router: str) -> str:
 
 def combine_evidence(state) -> list:
     """
-    Merge DB-matched sections (state['content'], from the doc-ID mapper) with
-    whatever the hybrid retriever produced (state['context']), deduping by doc_id
-    so the responser/ranker see the same evidence regardless of whether the
-    retriever ran.
+    Dedupe state['content'] by doc_id, so the responser/ranker never see the
+    same document twice (e.g. after a retry pass re-appends overlapping hits).
     """
     content = state.get("content") or []
-    context = state.get("context") or []
 
     combined = []
     seen_doc_ids = set()
-    for doc in list(content) + list(context):
+    for doc in content:
         doc_id = getattr(doc, "metadata", {}).get("doc_id") if hasattr(doc, "metadata") else None
         if doc_id is not None:
             if doc_id in seen_doc_ids:

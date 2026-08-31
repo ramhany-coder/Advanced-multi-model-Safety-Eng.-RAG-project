@@ -6,7 +6,7 @@ from agents.Ranker.prompts import ranker_humman_prompt, ranker_system_prompt
 from agents.Ranker.schemas import RankScore
 
 PRIMARY_ROUTER = "groq"
-PRIMARY_MODEL = "openai/gpt-oss-20b"
+PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
 
 SECONDARY_ROUTER = "gpt"
 SECONDARY_MODEL = "gpt-4o-mini"
