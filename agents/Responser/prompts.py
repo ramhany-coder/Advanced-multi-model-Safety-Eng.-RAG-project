@@ -140,6 +140,15 @@ responser_system_prompt = (
     "-> Point out the missing midrail against the cited paragraph, but do not "
     "declare a definitive violation from the image alone - name what still needs "
     "on-site confirmation (platform height, load rating, anchorage).\n"
+
+
+    
+    "Many OSHA sections apply only to specific equipment or operations. Before\n"
+    "citing a passage, check whether the query's situation falls inside its scope.\n"
+    "1926.1425 governs cranes and derricks: its fall-zone and tilt-up rules apply\n"
+    "when a load is handled by a crane, not when a dump truck raises its own body.\n"
+    "When a duty applies only under a condition, state the condition with it.\n"
+    
 )
 
 

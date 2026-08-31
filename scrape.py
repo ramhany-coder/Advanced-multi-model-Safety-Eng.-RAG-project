@@ -203,14 +203,34 @@ class DesignatorStack:
     def stack(self) -> list[str]:
         return [t for t, _ in self.entries]
 
+    def _enforce_letter_root(self, prior_root: tuple[str, str] | None) -> None:
+        """A CFR paragraph path always starts with a lowercase letter. An
+        explicit multi-token run like (2)(i) can omit the still-open (a)/(b)
+        it nests under - GPO just doesn't repeat it. reset() below replaces
+        self.entries wholesale, so without this the root is gone not only
+        from this paragraph but from every sibling after it, since push()
+        only ever slices entries, never rebuilds them. This is what produced
+        rootless citations like 1926.601(2)(i) and 1926.601(6)."""
+        if prior_root is not None and (
+            not self.entries or self.entries[0][1] != "lower_alpha"
+        ):
+            self.entries = [prior_root] + self.entries
+
     def reset(self, tokens: list[str]) -> list[str]:
-        """The paragraph carried an explicit full path - trust it."""
+        """The paragraph carried an explicit full path - trust the tokens,
+        but keep the letter root (see _enforce_letter_root)."""
+        prior_root = (
+            self.entries[0]
+            if self.entries and self.entries[0][1] == "lower_alpha"
+            else None
+        )
         self.entries = []
         for depth, tok in enumerate(tokens):
             cands = systems_for(tok) or ["digit"]
             want = EXPECTED_BY_DEPTH[depth] if depth < len(EXPECTED_BY_DEPTH) else None
             system = want if want in cands else cands[0]
             self.entries.append((tok, system))
+        self._enforce_letter_root(prior_root)
         return self.stack
 
     def push(self, tok: str) -> list[str]:
@@ -609,6 +629,24 @@ def parse_section(raw: dict[str, Any]) -> dict[str, Any]:
         body_chunks.append(text)
         if source_type != "ecfr_citation":
             prose_chunks.append(text)
+
+    # Definitions sections (e.g. 1926.1202, 1926.968) lay out each defined
+    # term as its own untagged paragraph and never use a lettered top-level
+    # designator anywhere in the section. A term's prose can still contain a
+    # bare numbered list - "Confined space means a space that: (1) ... (2)
+    # ..." - which the stack has no way to distinguish from a real CFR
+    # subparagraph until it's clear, in hindsight, that no (a)/(b) ever
+    # appeared to root it. There is no official CFR pinpoint for that kind of
+    # list, so a rootless id like "1926.1202(1)" is not a citation - strip it
+    # rather than report a well-formed but fake one. Appendix numbering
+    # (e.g. "1926 Subpart M App A(1)") doesn't match this section_id-prefixed
+    # shape and is left untouched.
+    for s in subsections.values():
+        oid = s["official_subsection_id"]
+        if oid and re.match(r"^\d+\.\d+\(\d", oid):
+            s["official_subsection_id"] = ""
+            s["designator"] = ""
+            designated -= 1
 
     full_text = "\n\n".join(body_chunks)
     kind = classify(title_text, is_appendix, head)
