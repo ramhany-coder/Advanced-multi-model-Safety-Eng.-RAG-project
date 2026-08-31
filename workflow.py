@@ -330,8 +330,9 @@ class Workflow:
         # The retry pass (mark_retry, below) goes straight back to the
         # retriever and reuses the sub_queries already computed for this
         # merged query -- no need to re-decompose an unchanged query.
-        # reranker dedupes/trims state['content'] via combine_evidence()
-        # before the responser sees it.
+        # reranker fuses state['ranked_lists'] via RRF (or the LLM path, see
+        # config.settings.USE_LLM_RERANKER) into state['content'] before the
+        # responser sees it.
         graph.add_edge("retriever", "reranker")
         graph.add_edge("reranker", "responser")
         graph.add_edge("responser", "ranker")

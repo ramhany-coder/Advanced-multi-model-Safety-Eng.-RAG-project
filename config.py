@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     # query. Set to False to restore the old behavior (always trust a hit).
     ENABLE_CACHE_REASONING: bool = True
 
+    # The reranker node fuses per-sub-query retrieval rankings deterministically
+    # (RRF, agents/Retrieve/fusion.py) by default. Flip to True to route back
+    # through the LLM-based reranker (agents/Reranker) instead -- kept behind
+    # this flag rather than removed so the two can be A/B'd on the golden set.
+    USE_LLM_RERANKER: bool = False
+    RETRIEVAL_TOP_K: int = 8
+
     WHISPER_MODEL_SIZE: str = "small"
     WHISPER_MODEL_PATH: str = "models/whisper"
 

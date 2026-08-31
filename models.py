@@ -22,6 +22,10 @@ class State (BaseModel):
     sub_queries : list[str] = []
     decomposer_error : Optional[str] = None
     content : Optional[list] = None
+    # One retrieval hit list per sub-query, kept separate (not unioned) so the
+    # reranker node's RRF fusion (agents/Retrieve/fusion.py) can weigh a chunk
+    # by how many sub-queries surfaced it, not just merge everything together.
+    ranked_lists : Optional[list] = None
     retried : Optional[bool] = None
     retrieval_mode : Optional[str] = None
     bm25_error : Optional[str] = None

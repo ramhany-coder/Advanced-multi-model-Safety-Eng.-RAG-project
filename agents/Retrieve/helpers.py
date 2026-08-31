@@ -47,14 +47,17 @@ def _ensemble_retrieve(documents: list[Document], query: str, fetch_k: int) -> l
     return retriever.invoke(query)[:fetch_k]
 
 
-def _multi_query_retrieve(
+def _multi_query_retrieve_ranked(
     documents: list[Document],
     queries: list[str],
     fetch_k: int,
-) -> list[Document]:
+) -> list[list[Document]]:
     """
     Search once per sub-query against a single shared retriever, run
-    concurrently, then union the hits deduped by chunk_id.
+    concurrently, and return each sub-query's own ranked hit list kept
+    separate (not unioned) -- RRF fusion (agents/Retrieve/fusion.py) needs
+    per-query rank position to weigh a chunk by how many sub-queries
+    surfaced it, which a flattened union throws away.
 
     The first query (the unmodified merged query, by convention) gets a
     wider per-query slice than the rest -- it's the one plain semantic match
@@ -71,11 +74,14 @@ def _multi_query_retrieve(
         return retriever.invoke(q)[:per_query_k]
 
     with ThreadPoolExecutor(max_workers=min(len(queries), 6)) as pool:
-        results = list(pool.map(lambda pair: _search(*pair), enumerate(queries)))
+        return list(pool.map(lambda pair: _search(*pair), enumerate(queries)))
 
+
+def _dedupe_by_chunk_id(ranked_lists: list[list[Document]]) -> list[Document]:
+    """Flatten per-query hit lists into one list, first-seen-wins by chunk_id."""
     hits: list[Document] = []
     seen: set = set()
-    for docs in results:
+    for docs in ranked_lists:
         for doc in docs:
             chunk_id = doc.metadata.get("chunk_id")
             if chunk_id in seen:
@@ -83,3 +89,18 @@ def _multi_query_retrieve(
             seen.add(chunk_id)
             hits.append(doc)
     return hits
+
+
+def _multi_query_retrieve(
+    documents: list[Document],
+    queries: list[str],
+    fetch_k: int,
+) -> list[Document]:
+    """
+    Union of _multi_query_retrieve_ranked's per-sub-query hits, deduped by
+    chunk_id. Kept for callers that only need plain hybrid retrieval (e.g.
+    tests/test_retrieval.py) -- agents/Retrieve/agent.py calls the ranked
+    variant directly so it can hand per-query lists to RRF fusion instead of
+    this flattened union.
+    """
+    return _dedupe_by_chunk_id(_multi_query_retrieve_ranked(documents, queries, fetch_k))

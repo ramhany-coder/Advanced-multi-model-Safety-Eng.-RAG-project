@@ -1,8 +1,12 @@
+import logging
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agents.llm.fallback import FallBack
 from agents.helpers import combine_evidence, format_context_for_prompt
 from agents.Responser.prompts import responser_humman_prompt, responser_system_prompt
+
+logger = logging.getLogger("pipeline")
 
 PRIMARY_ROUTER = "groq"
 PRIMARY_MODEL = "openai/gpt-oss-safeguard-20b"
@@ -46,5 +50,14 @@ def responser_agent(state) -> dict:
         ]
 
     response = responser_llm.invoke(build_messages, fallback_order=FALLBACK_ORDER)
+
+    logger.info(
+        "RESPONSER RAW OUTPUT (%d chars, %d context docs):\n%s",
+        len(response or ""), len(context or []), response,
+    )
+    logger.info(
+        "RESPONSER CONTEXT: %s",
+        [d.metadata.get("chunk_id") for d in (context or [])],
+    )
 
     return {'response': response}
